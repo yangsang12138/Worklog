@@ -6,6 +6,7 @@
         ChartBarFloating,
         Calendar,
         Document,
+        SendAlt,
     } from "carbon-icons-svelte";
     import type { TabType } from "$lib/components/app/types";
     import { ALL_BOARD_TABS } from "$lib/components/app/types";
@@ -29,6 +30,7 @@
         timeline: () => m.board_tab_timeline(),
         calendar: () => m.board_tab_calendar(),
         docs: () => m.board_tab_docs(),
+        push: () => "远程推送",
     };
 
     function toggle() {
@@ -123,6 +125,8 @@
                                 <Calendar size={16} />
                             {:else if tab === "docs"}
                                 <Document size={16} />
+                            {:else if tab === "push"}
+                                <SendAlt size={16} />
                             {/if}
                         </span>
                         <span class="tab-manager-item-label"
