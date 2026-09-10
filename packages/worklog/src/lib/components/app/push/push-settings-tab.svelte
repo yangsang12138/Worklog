@@ -1,7 +1,14 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { Modal, InlineLoading, Tag } from "carbon-components-svelte";
-    import { Add, TrashCan, Edit, SendAlt } from "carbon-icons-svelte";
+    import {
+        Add,
+        TrashCan,
+        Edit,
+        SendAlt,
+        Download,
+        Upload,
+    } from "carbon-icons-svelte";
     import { getWorkspace } from "$lib/hooks/workspace.svelte";
     import { getPushHook } from "$lib/push/push-hook.svelte";
     import {
@@ -12,6 +19,13 @@
         serializeBindings,
         defaultSourceConfig,
     } from "$lib/push/field-catalog";
+    import {
+        exportPushTargetsToFile,
+        pickImportFile,
+        applyImport,
+    } from "$lib/push/push-config-io";
+    import { getDb } from "$lib/db";
+    import { notifications } from "$lib/hooks/notifications.svelte";
     import type {
         PushTarget,
         CreatePushTargetInput,
@@ -36,6 +50,9 @@
         | "params"
         | "payload"
         | "variables";
+
+    // Kept out of the template: Svelte would read `{{...}}` as an expression.
+    const URL_VAR_HINT = '{{变量Key}}';
 
     let showModal = $state(false);
     let editingTargetId = $state<string | null>(null);
@@ -114,6 +131,20 @@
     }
 
     async function handleSave() {
+        // Validate first and jump to the tab that owns the offending field, so
+        // a disabled-looking save never leaves the user guessing.
+        const problem = validateForm();
+        if (problem) {
+            editorTab = problem.tab;
+            notifications.add({
+                kind: "error",
+                title: "无法保存",
+                subtitle: problem.message,
+                timeout: 5000,
+            });
+            return;
+        }
+
         saving = true;
         try {
             const input: CreatePushTargetInput = {
@@ -139,12 +170,37 @@
             } else {
                 await push.createTarget(input);
             }
+
+            notifications.add({
+                kind: "success",
+                title: editingTargetId ? "已保存" : "已创建",
+                subtitle: `推送目标「${input.name}」已保存。`,
+                timeout: 3000,
+            });
             showModal = false;
         } catch (e) {
             console.error("Failed to save push target:", e);
+            notifications.add({
+                kind: "error",
+                title: "保存失败",
+                subtitle: e instanceof Error ? e.message : String(e),
+                timeout: 8000,
+            });
         } finally {
             saving = false;
         }
+    }
+
+    /** First blocking validation problem, together with the tab that owns it. */
+    function validateForm(): { tab: EditorTab; message: string } | null {
+        if (!formName.trim())
+            return { tab: "basic", message: "请填写「目标名称」。" };
+        if (!formEndpointUrl.trim())
+            return {
+                tab: "params",
+                message: "请填写「请求地址 (Endpoint URL)」。",
+            };
+        return null;
     }
 
     async function handleDelete(id: string) {
@@ -156,6 +212,115 @@
         }
     }
 
+    // ── Import / export ──────────────────────────────────────────────────────
+    let ioBusy = $state(false);
+
+    async function handleExportAll() {
+        if (push.targets.length === 0 || ioBusy) return;
+        ioBusy = true;
+        try {
+            const dateSuffix = new Date().toISOString().split("T")[0];
+            const ok = await exportPushTargetsToFile(
+                push.targets,
+                `worklog-push-targets_${dateSuffix}`,
+                "导出推送目标配置",
+                "Worklog 推送配置",
+            );
+            if (ok) {
+                notifications.add({
+                    kind: "success",
+                    title: "导出成功",
+                    subtitle: `已导出 ${push.targets.length} 个推送目标配置。`,
+                    timeout: 3000,
+                });
+            }
+        } catch (e) {
+            notifications.add({
+                kind: "error",
+                title: "导出失败",
+                subtitle: e instanceof Error ? e.message : String(e),
+                timeout: 5000,
+            });
+        } finally {
+            ioBusy = false;
+        }
+    }
+
+    async function handleExportOne(target: PushTarget) {
+        if (ioBusy) return;
+        ioBusy = true;
+        try {
+            const ok = await exportPushTargetsToFile(
+                [target],
+                `push-target_${target.name}`,
+                "导出推送目标配置",
+                "Worklog 推送配置",
+            );
+            if (ok) {
+                notifications.add({
+                    kind: "success",
+                    title: "导出成功",
+                    subtitle: `已导出「${target.name}」的配置。`,
+                    timeout: 3000,
+                });
+            }
+        } catch (e) {
+            notifications.add({
+                kind: "error",
+                title: "导出失败",
+                subtitle: e instanceof Error ? e.message : String(e),
+                timeout: 5000,
+            });
+        } finally {
+            ioBusy = false;
+        }
+    }
+
+    async function handleImport() {
+        if (ioBusy || !workspace.path) return;
+        ioBusy = true;
+        try {
+            const incoming = await pickImportFile(
+                "导入推送目标配置",
+                "Worklog 推送配置",
+            );
+            if (!incoming) return; // cancelled
+
+            if (incoming.length === 0) {
+                notifications.add({
+                    kind: "warning",
+                    title: "没有可导入的配置",
+                    subtitle: "文件中未找到带名称与请求地址的有效目标。",
+                    timeout: 5000,
+                });
+                return;
+            }
+
+            const db = await getDb(workspace.path);
+            const summary = await applyImport(db, incoming);
+            await push.loadTargets();
+
+            const parts: string[] = [];
+            if (summary.created > 0) parts.push(`新增 ${summary.created} 个`);
+            if (summary.updated > 0) parts.push(`更新 ${summary.updated} 个`);
+            notifications.add({
+                kind: "success",
+                title: "导入完成",
+                subtitle: parts.join("，") || "没有变化",
+                timeout: 5000,
+            });
+        } catch (e) {
+            notifications.add({
+                kind: "error",
+                title: "导入失败",
+                subtitle: e instanceof Error ? e.message : String(e),
+                timeout: 6000,
+            });
+        } finally {
+            ioBusy = false;
+        }
+    }
+
     // ── Derived ──────────────────────────────────────────────────────────────
     const usedVariableKeys = $derived(
         [...formBindings, ...formQueryParams]
@@ -163,17 +328,19 @@
             .map((b) => b.variable_key as string),
     );
 
-    const canSave = $derived(
-        formName.trim().length > 0 &&
-            formEndpointUrl.trim().length > 0 &&
-            !saving,
-    );
+    /** Human-readable list of what is still missing (shown above the editor). */
+    const missingRequired = $derived.by(() => {
+        const out: string[] = [];
+        if (!formName.trim()) out.push("目标名称");
+        if (!formEndpointUrl.trim()) out.push("请求地址");
+        return out;
+    });
 
     const TAB_ITEMS: { id: EditorTab; label: string }[] = [
         { id: "basic", label: "基本信息" },
         { id: "sources", label: "字段来源" },
         { id: "headers", label: "请求头" },
-        { id: "params", label: "URL 参数" },
+        { id: "params", label: "URL 与参数" },
         { id: "payload", label: "请求体字段" },
         { id: "variables", label: "推送变量" },
     ];
@@ -229,10 +396,30 @@
     <section class="settings-section">
         <div class="section-header">
             <h2>远程推送目标</h2>
-            <button type="button" class="primary-btn" onclick={openNewModal}>
-                <Add size={14} />
-                新增目标
-            </button>
+            <div class="section-actions">
+                <button
+                    type="button"
+                    class="action-btn"
+                    disabled={ioBusy}
+                    onclick={handleImport}
+                >
+                    <Upload size={14} />
+                    导入配置
+                </button>
+                <button
+                    type="button"
+                    class="action-btn"
+                    disabled={ioBusy || push.targets.length === 0}
+                    onclick={handleExportAll}
+                >
+                    <Download size={14} />
+                    导出全部
+                </button>
+                <button type="button" class="primary-btn" onclick={openNewModal}>
+                    <Add size={14} />
+                    新增目标
+                </button>
+            </div>
         </div>
         <p class="section-desc">
             按推送目标维护一个 POST 请求：地址、请求头、URL 参数，以及请求体字段的来源映射。
@@ -303,6 +490,15 @@
                             </button>
                             <button
                                 type="button"
+                                class="action-btn"
+                                disabled={ioBusy}
+                                onclick={() => handleExportOne(target)}
+                            >
+                                <Download size={14} />
+                                导出
+                            </button>
+                            <button
+                                type="button"
                                 class="action-btn action-btn--danger"
                                 onclick={() => (deleteConfirmId = target.id)}
                             >
@@ -321,12 +517,12 @@
 {#if showModal}
     <Modal
         size="lg"
-        open={true}
+        bind:open={showModal}
         primaryButtonText={editingTargetId ? "保存更改" : "创建目标"}
         secondaryButtonText="取消"
         on:click:button--secondary={() => (showModal = false)}
         on:click:button--primary={handleSave}
-        primaryButtonDisabled={!canSave}
+        primaryButtonDisabled={saving}
     >
         <h3 slot="heading">
             {editingTargetId ? "编辑推送目标" : "新增推送目标"}
@@ -355,6 +551,12 @@
             </div>
 
             <div class="editor-body">
+                {#if missingRequired.length > 0}
+                    <div class="required-banner">
+                        还需填写：{missingRequired.join("、")}
+                    </div>
+                {/if}
+
                 {#if editorTab === "basic"}
                     <div class="editor-form">
                         <label class="field">
@@ -374,16 +576,6 @@
                                 type="text"
                                 placeholder="可选描述"
                                 bind:value={formDescription}
-                            />
-                        </label>
-
-                        <label class="field">
-                            <span class="field-label">Endpoint URL *</span>
-                            <input
-                                class="field-input mono"
-                                type="text"
-                                placeholder="https://ticket.example.com/api/issues"
-                                bind:value={formEndpointUrl}
                             />
                         </label>
 
@@ -414,6 +606,10 @@
                                 />
                             </label>
                         </div>
+
+                        <p class="form-note">
+                            请求地址与查询参数在「URL 与参数」页签配置。
+                        </p>
 
                         <!-- Availability toggle: a visible, bordered control -->
                         <div class="toggle-field">
@@ -451,12 +647,38 @@
                         variables={formVariables}
                     />
                 {:else if editorTab === "params"}
-                    <PushPayloadBuilder
-                        bind:bindings={formQueryParams}
-                        variables={formVariables}
-                        sourceConfig={formSourceConfig}
-                        mode="query"
-                    />
+                    <div class="params-tab">
+                        <div class="url-block">
+                            <label class="field">
+                                <span class="field-label">请求地址 (Endpoint URL) *</span>
+                                <input
+                                    class="field-input mono"
+                                    class:invalid={!formEndpointUrl.trim()}
+                                    type="text"
+                                    placeholder="https://ticket.example.com/api/issues"
+                                    bind:value={formEndpointUrl}
+                                />
+                            </label>
+                            {#if !formEndpointUrl.trim()}
+                                <p class="url-warn">
+                                    请填写请求地址，推送时需要它来发起 POST 请求。
+                                </p>
+                            {:else}
+                                <p class="url-hint">
+                                    值里可以引用推送变量，写成 <code>{URL_VAR_HINT}</code>。
+                                </p>
+                            {/if}
+                        </div>
+
+                        <div class="params-divider"></div>
+
+                        <PushPayloadBuilder
+                            bind:bindings={formQueryParams}
+                            variables={formVariables}
+                            sourceConfig={formSourceConfig}
+                            mode="query"
+                        />
+                    </div>
                 {:else if editorTab === "payload"}
                     <PushPayloadBuilder
                         bind:bindings={formBindings}
@@ -482,6 +704,7 @@
         danger
         primaryButtonText="删除"
         secondaryButtonText="取消"
+        on:close={() => (deleteConfirmId = null)}
         on:click:button--primary={() => handleDelete(deleteConfirmId!)}
         on:click:button--secondary={() => (deleteConfirmId = null)}
     >
@@ -506,6 +729,18 @@
         margin: 0;
         font-size: 1.25rem;
         font-weight: 600;
+    }
+
+    .section-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-shrink: 0;
+    }
+
+    .section-actions .action-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
     }
 
     .primary-btn {
@@ -657,6 +892,11 @@
         outline-offset: 1px;
     }
 
+    .action-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
     .action-btn--danger {
         color: var(--cds-support-01, #fa4d56);
         border-color: color-mix(
@@ -726,6 +966,20 @@
         max-height: 30rem;
         overflow-y: auto;
         padding-right: 0.25rem;
+    }
+
+    .required-banner {
+        margin-bottom: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8125rem;
+        color: var(--cds-support-03, #f1c21b);
+        background: color-mix(
+            in srgb,
+            var(--cds-support-03, #f1c21b) 12%,
+            transparent
+        );
+        border-left: 3px solid var(--cds-support-03, #f1c21b);
+        border-radius: 2px;
     }
 
     .editor-form {
@@ -853,6 +1107,54 @@
     }
 
     .toggle-hint {
+        font-size: 0.75rem;
+        color: var(--cds-text-03);
+    }
+
+    /* ── URL 与参数 tab ───────────────────────────────────────────────────── */
+    .params-tab {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .url-block {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .url-block .field-input.invalid {
+        border-bottom-color: var(--cds-support-01, #fa4d56);
+    }
+
+    .url-hint {
+        margin: 0;
+        font-size: 0.75rem;
+        color: var(--cds-text-03);
+    }
+
+    .url-hint code {
+        font-family: var(--cds-code-01-font-family);
+        background: var(--cds-ui-02);
+        padding: 0.0625rem 0.25rem;
+        border-radius: 2px;
+    }
+
+    .url-warn {
+        margin: 0;
+        font-size: 0.75rem;
+        color: var(--cds-support-01, #fa4d56);
+    }
+
+    .params-divider {
+        height: 1px;
+        background: var(--cds-ui-03);
+        margin: 0.25rem 0;
+    }
+
+    .form-note {
+        margin: 0;
         font-size: 0.75rem;
         color: var(--cds-text-03);
     }

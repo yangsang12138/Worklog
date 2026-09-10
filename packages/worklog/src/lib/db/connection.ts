@@ -30,6 +30,14 @@ export async function getDb(workspacePath: string): Promise<Database> {
     const { runMigrations } = await import('./migrate');
     await runMigrations(_db);
 
+    // ── Reconcile remote-push tables ───────────────────
+    // Runs independently of schema_version: a workspace can report the current
+    // version while its tables were created by older code and never upgraded
+    // (CREATE TABLE IF NOT EXISTS is a no-op on an existing table), which would
+    // make every push-target insert fail on a missing column.
+    const { ensurePushSchema } = await import('./ensure-push-schema');
+    await ensurePushSchema(_db);
+
     // ── Seed Default Ticket Types if empty ──────────────
     const typesCount = await _db.select<{ count: number }[]>("SELECT COUNT(*) as count FROM ticket_types");
     if (typesCount && typesCount[0] && typesCount[0].count === 0) {

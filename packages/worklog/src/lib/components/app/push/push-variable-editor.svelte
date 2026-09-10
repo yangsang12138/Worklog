@@ -1,8 +1,11 @@
 <script lang="ts">
     import { Button } from "carbon-components-svelte";
     import { Add, TrashCan } from "carbon-icons-svelte";
-    import { optionsToText, textToOptions } from "$lib/push/field-catalog";
-    import type { PushVariableDef, PushVariableType } from "$lib/push/types";
+    import type {
+        PushVariableDef,
+        PushVariableType,
+        PushVariableOption,
+    } from "$lib/push/types";
 
     interface Props {
         variables: PushVariableDef[];
@@ -25,6 +28,8 @@
     function needsOptions(type: PushVariableType): boolean {
         return type === "select" || type === "multiselect";
     }
+
+    // ── Variable level ───────────────────────────────────────────────────────
 
     function addVariable() {
         let n = variables.length + 1;
@@ -58,12 +63,85 @@
         );
     }
 
+    /** Switching to a choice type seeds one empty row so there is something to fill. */
+    function changeType(index: number, type: PushVariableType) {
+        const patch: Partial<PushVariableDef> = { type };
+        if (needsOptions(type)) {
+            const current = variables[index].options ?? [];
+            if (current.length === 0) {
+                patch.options = [{ label: "", value: "" }];
+            }
+        }
+        updateVariable(index, patch);
+    }
+
     function keyWarning(v: PushVariableDef, index: number): string | null {
         if (!v.key.trim()) return "变量 Key 不能为空";
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.key))
             return "建议使用字母/数字/下划线，且不以数字开头";
         if (variables.some((o, i) => i !== index && o.key === v.key))
             return "变量 Key 重复";
+        return null;
+    }
+
+    // ── Option rows (label / value pairs) ────────────────────────────────────
+
+    function optionsOf(index: number): PushVariableOption[] {
+        return variables[index]?.options ?? [];
+    }
+
+    function addOption(index: number) {
+        updateVariable(index, {
+            options: [...optionsOf(index), { label: "", value: "" }],
+        });
+    }
+
+    function removeOption(index: number, optIndex: number) {
+        updateVariable(index, {
+            options: optionsOf(index).filter((_, i) => i !== optIndex),
+        });
+    }
+
+    function moveOption(index: number, optIndex: number, delta: number) {
+        const list = [...optionsOf(index)];
+        const next = optIndex + delta;
+        if (next < 0 || next >= list.length) return;
+        const [row] = list.splice(optIndex, 1);
+        list.splice(next, 0, row);
+        updateVariable(index, { options: list });
+    }
+
+    /**
+     * Edit the display name. While the submitted value is still empty (or still
+     * mirrors the previous label) it follows along, which covers the common
+     * "label and value are the same" case without extra typing.
+     */
+    function updateOptionLabel(index: number, optIndex: number, label: string) {
+        const list = [...optionsOf(index)];
+        const prev = list[optIndex] ?? { label: "", value: "" };
+        const syncValue = !prev.value || prev.value === prev.label;
+        list[optIndex] = { label, value: syncValue ? label : prev.value };
+        updateVariable(index, { options: list });
+    }
+
+    function updateOptionValue(index: number, optIndex: number, value: string) {
+        const list = [...optionsOf(index)];
+        const prev = list[optIndex] ?? { label: "", value: "" };
+        list[optIndex] = { ...prev, value };
+        updateVariable(index, { options: list });
+    }
+
+    /** Options that are complete enough to be offered at push time. */
+    function validOptions(index: number): PushVariableOption[] {
+        return optionsOf(index).filter((o) => o.value.trim() !== "");
+    }
+
+    function optionWarning(v: PushVariableDef, index: number): string | null {
+        if (!needsOptions(v.type)) return null;
+        const valid = validOptions(index);
+        if (valid.length === 0) return "至少需要一个带「提交值」的选项";
+        const values = valid.map((o) => o.value);
+        if (new Set(values).size !== values.length) return "提交值存在重复";
         return null;
     }
 </script>
@@ -73,8 +151,8 @@
         <div>
             <h3>推送变量</h3>
             <p class="variable-desc">
-                变量在「请求体字段」中被引用后，会在每次远程推送时由用户填写。
-                适合目标系统要求人工选择的字段（如工单类型），支持手动输入或下拉选择。
+                变量在「请求体字段」「URL 与参数」「请求头」中被引用后，会在每次远程推送时由用户填写。
+                选择「下拉选择 / 多选」即可逐行维护可选项。
             </p>
         </div>
         <Button kind="ghost" size="small" icon={Add} onclick={addVariable}>
@@ -93,6 +171,7 @@
         <div class="variable-list">
             {#each variables as v, i (i)}
                 {@const warning = keyWarning(v, i)}
+                {@const optWarn = optionWarning(v, i)}
                 <div class="variable-row" class:has-error={!!warning}>
                     <div class="variable-grid">
                         <label class="field">
@@ -127,29 +206,67 @@
                                 class="field-input"
                                 value={v.type}
                                 onchange={(e) =>
-                                    updateVariable(i, {
-                                        type: e.currentTarget
-                                            .value as PushVariableType,
-                                    })}
+                                    changeType(
+                                        i,
+                                        e.currentTarget.value as PushVariableType,
+                                    )}
                             >
                                 {#each TYPE_OPTIONS as t}
                                     <option value={t.value}>{t.label}</option>
                                 {/each}
                             </select>
                         </label>
-                        <label class="field">
-                            <span class="field-label">默认值</span>
-                            <input
-                                class="field-input"
-                                type="text"
-                                placeholder="可留空"
-                                value={v.default_value ?? ""}
-                                oninput={(e) =>
-                                    updateVariable(i, {
-                                        default_value: e.currentTarget.value,
-                                    })}
-                            />
-                        </label>
+
+                        <!-- Default value: a picker for choice types, free text otherwise -->
+                        <div class="field">
+                            {#if v.type === "select"}
+                                <span class="field-label">默认值</span>
+                                <select
+                                    class="field-input"
+                                    value={v.default_value ?? ""}
+                                    onchange={(e) =>
+                                        updateVariable(i, {
+                                            default_value:
+                                                e.currentTarget.value,
+                                        })}
+                                >
+                                    <option value="">（不设置）</option>
+                                    {#each validOptions(i) as opt}
+                                        <option value={opt.value}>
+                                            {opt.label || opt.value}
+                                        </option>
+                                    {/each}
+                                </select>
+                            {:else if v.type === "multiselect"}
+                                <span class="field-label">
+                                    默认值（多个用逗号分隔）
+                                </span>
+                                <input
+                                    class="field-input"
+                                    type="text"
+                                    placeholder="bug,feature"
+                                    value={v.default_value ?? ""}
+                                    oninput={(e) =>
+                                        updateVariable(i, {
+                                            default_value:
+                                                e.currentTarget.value,
+                                        })}
+                                />
+                            {:else}
+                                <span class="field-label">默认值</span>
+                                <input
+                                    class="field-input"
+                                    type="text"
+                                    placeholder="可留空"
+                                    value={v.default_value ?? ""}
+                                    oninput={(e) =>
+                                        updateVariable(i, {
+                                            default_value:
+                                                e.currentTarget.value,
+                                        })}
+                                />
+                            {/if}
+                        </div>
                     </div>
 
                     <div class="variable-row-footer">
@@ -166,7 +283,7 @@
                         </label>
 
                         {#if usedKeys.includes(v.key)}
-                            <span class="used-tag">已被请求体字段引用</span>
+                            <span class="used-tag">已被引用</span>
                         {/if}
                         {#if warning}
                             <span class="error-tag">{warning}</span>
@@ -186,23 +303,99 @@
 
                     <div class="variable-options">
                         {#if needsOptions(v.type)}
-                            <label class="field">
-                                <span class="field-label">
-                                    可选项（每行一条，可用 显示名=值）
-                                </span>
-                                <textarea
-                                    class="field-input mono"
-                                    rows="4"
-                                    placeholder={"Bug=bug\nFeature=feature\nTask=task"}
-                                    value={optionsToText(v.options)}
-                                    oninput={(e) =>
-                                        updateVariable(i, {
-                                            options: textToOptions(
-                                                e.currentTarget.value,
-                                            ),
-                                        })}
-                                ></textarea>
-                            </label>
+                            <div class="option-editor">
+                                <div class="option-editor-head">
+                                    <span class="field-label">
+                                        可选项
+                                        <span class="option-count">
+                                            {validOptions(i).length} 个有效
+                                        </span>
+                                    </span>
+                                    <button
+                                        type="button"
+                                        class="link-btn"
+                                        onclick={() => addOption(i)}
+                                    >
+                                        + 添加选项
+                                    </button>
+                                </div>
+
+                                {#if optionsOf(i).length === 0}
+                                    <p class="option-empty">
+                                        还没有选项。点击「+ 添加选项」逐行维护「显示名 / 提交值」。
+                                    </p>
+                                {:else}
+                                    <div class="option-head-row">
+                                        <span>显示名</span>
+                                        <span>提交值</span>
+                                        <span></span>
+                                    </div>
+                                    {#each optionsOf(i) as opt, oi (oi)}
+                                        <div class="option-row">
+                                            <input
+                                                class="field-input"
+                                                type="text"
+                                                placeholder="Bug"
+                                                value={opt.label}
+                                                oninput={(e) =>
+                                                    updateOptionLabel(
+                                                        i,
+                                                        oi,
+                                                        e.currentTarget.value,
+                                                    )}
+                                            />
+                                            <input
+                                                class="field-input mono"
+                                                class:missing={!opt.value.trim()}
+                                                type="text"
+                                                placeholder="bug"
+                                                value={opt.value}
+                                                oninput={(e) =>
+                                                    updateOptionValue(
+                                                        i,
+                                                        oi,
+                                                        e.currentTarget.value,
+                                                    )}
+                                            />
+                                            <div class="option-actions">
+                                                <button
+                                                    type="button"
+                                                    class="icon-btn"
+                                                    title="上移"
+                                                    disabled={oi === 0}
+                                                    onclick={() =>
+                                                        moveOption(i, oi, -1)}
+                                                >
+                                                    ↑
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="icon-btn"
+                                                    title="下移"
+                                                    disabled={oi ===
+                                                        optionsOf(i).length - 1}
+                                                    onclick={() =>
+                                                        moveOption(i, oi, 1)}
+                                                >
+                                                    ↓
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="icon-btn icon-btn--danger"
+                                                    title="删除选项"
+                                                    onclick={() =>
+                                                        removeOption(i, oi)}
+                                                >
+                                                    <TrashCan size={14} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    {/each}
+                                    {#if optWarn}
+                                        <p class="option-warn">{optWarn}</p>
+                                    {/if}
+                                {/if}
+                            </div>
                         {:else}
                             <label class="field">
                                 <span class="field-label">输入提示（可选）</span>
@@ -301,6 +494,9 @@
     }
 
     .field-label {
+        display: flex;
+        align-items: baseline;
+        gap: 0.375rem;
         font-size: 0.6875rem;
         font-weight: 600;
         letter-spacing: 0.02em;
@@ -326,11 +522,8 @@
         outline-offset: -2px;
     }
 
-    textarea.field-input {
-        height: auto;
-        padding: 0.5rem 0.625rem;
-        resize: vertical;
-        line-height: 1.4;
+    .field-input.missing {
+        border-bottom-color: var(--cds-support-03, #f1c21b);
     }
 
     .mono {
@@ -388,12 +581,19 @@
         width: 1.75rem;
         height: 1.75rem;
         border-radius: 2px;
+        font-size: 0.8125rem;
         color: var(--cds-text-02);
         cursor: pointer;
     }
 
-    .icon-btn:hover {
+    .icon-btn:hover:not(:disabled) {
         background: var(--cds-hover-ui);
+        color: var(--cds-text-01);
+    }
+
+    .icon-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
     }
 
     .icon-btn--danger:hover {
@@ -404,6 +604,76 @@
         margin-top: 0.5rem;
         padding-top: 0.5rem;
         border-top: 1px dashed var(--cds-ui-03);
+    }
+
+    /* ── Option k-v rows ──────────────────────────────────────────────────── */
+    .option-editor {
+        display: flex;
+        flex-direction: column;
+        gap: 0.375rem;
+    }
+
+    .option-editor-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.5rem;
+    }
+
+    .option-count {
+        font-weight: 400;
+        color: var(--cds-text-03);
+    }
+
+    .link-btn {
+        all: unset;
+        font-size: 0.75rem;
+        color: var(--cds-link-01, #78a9ff);
+        cursor: pointer;
+    }
+
+    .link-btn:hover {
+        text-decoration: underline;
+    }
+
+    .option-empty {
+        margin: 0;
+        font-size: 0.75rem;
+        color: var(--cds-text-03);
+    }
+
+    .option-head-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 0.5rem;
+        font-size: 0.625rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--cds-text-03);
+        padding: 0 0.125rem;
+    }
+
+    .option-head-row span:last-child {
+        width: 5.25rem;
+    }
+
+    .option-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .option-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.0625rem;
+    }
+
+    .option-warn {
+        margin: 0.125rem 0 0 0;
+        font-size: 0.75rem;
+        color: var(--cds-support-03, #f1c21b);
     }
 
     @media (max-width: 900px) {
