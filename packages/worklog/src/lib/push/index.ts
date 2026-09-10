@@ -54,6 +54,22 @@ export {
 export { PushTargetRepo } from './push-target.repo';
 export { PushRecordRepo, type PushRecordFilter } from './push-record.repo';
 
+// Configuration import / export
+export {
+    EXPORT_KIND,
+    EXPORT_VERSION,
+    toPortable,
+    serializeTargets,
+    sanitizePortable,
+    parseImportFile,
+    exportPushTargetsToFile,
+    pickImportFile,
+    applyImport,
+    type PortablePushTarget,
+    type PushTargetExportFile,
+    type PushImportSummary,
+} from './push-config-io';
+
 // Engine + hook
 export { PushEngine } from './push-engine';
 export { getPushHook } from './push-hook.svelte';
