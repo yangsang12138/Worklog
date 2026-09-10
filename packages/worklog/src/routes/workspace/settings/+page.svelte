@@ -80,11 +80,13 @@
         Folder,
         Download,
         Upload,
+        SendAlt,
     } from "carbon-icons-svelte";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import { seedDatabase, seedLazyLoadingTest } from "$lib/db/seed";
     import { EventRepo, type EventRecord } from "$lib/db";
     import { Time } from "carbon-icons-svelte";
+    import PushSettingsTab from "$lib/components/app/push/push-settings-tab.svelte";
 
     type SettingsCategory =
         | "general"
@@ -92,6 +94,7 @@
         | "customization"
         | "data"
         | "sync"
+        | "push"
         | "debug"
         | "advanced";
     let activeCategory = $state<SettingsCategory>("general");
@@ -110,6 +113,7 @@
         },
         { id: "data", label: m.settings_category_data(), icon: DataBase },
         { id: "sync", label: m.settings_category_sync(), icon: Cloud },
+        { id: "push", label: "远程推送", icon: SendAlt },
         { id: "debug", label: "Debug", icon: Code },
         {
             id: "advanced",
@@ -1535,6 +1539,13 @@
                             </div>
                         </section>
                     {/if}
+                </div>
+            {/if}
+
+            <!-- ── Push Category ─────────────────────────────────────── -->
+            {#if activeCategory === "push"}
+                <div class="category-view">
+                    <PushSettingsTab />
                 </div>
             {/if}
 

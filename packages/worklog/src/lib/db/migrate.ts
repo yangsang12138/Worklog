@@ -469,6 +469,139 @@ async function migrate_v15(db: Database) {
     }
 }
 
+/**
+ * Migration v16:
+ * Create push_targets and push_records tables for remote push functionality.
+ */
+async function migrate_v16(db: Database) {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS push_targets (
+            id                  TEXT PRIMARY KEY,
+            name                TEXT NOT NULL,
+            description         TEXT NOT NULL DEFAULT '',
+            endpoint_url        TEXT NOT NULL,
+            http_method         TEXT NOT NULL DEFAULT 'POST',
+            headers             TEXT NOT NULL DEFAULT '{}',
+            body_template       TEXT NOT NULL DEFAULT '',
+            body_content_type   TEXT NOT NULL DEFAULT 'application/json',
+            field_mapping       TEXT NOT NULL DEFAULT '{}',
+            timeout_ms          INTEGER NOT NULL DEFAULT 30000,
+            retry_count         INTEGER NOT NULL DEFAULT 0,
+            enabled             INTEGER NOT NULL DEFAULT 1,
+            last_push_at        TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )
+    `);
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS push_records (
+            id              TEXT PRIMARY KEY,
+            ticket_id       TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+            board_id        TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+            target_id       TEXT NOT NULL REFERENCES push_targets(id) ON DELETE CASCADE,
+            status          TEXT NOT NULL DEFAULT 'pending'
+                            CHECK (status IN ('pending', 'success', 'failed')),
+            request_url     TEXT NOT NULL,
+            request_body    TEXT,
+            response_status INTEGER,
+            response_body   TEXT,
+            error_message   TEXT,
+            duration_ms     INTEGER,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        )
+    `);
+    await db.execute(
+        `CREATE INDEX IF NOT EXISTS idx_push_records_ticket ON push_records(ticket_id)`
+    );
+    await db.execute(
+        `CREATE INDEX IF NOT EXISTS idx_push_records_board ON push_records(board_id)`
+    );
+    await db.execute(
+        `CREATE INDEX IF NOT EXISTS idx_push_records_target ON push_records(target_id)`
+    );
+    await db.execute(
+        `CREATE INDEX IF NOT EXISTS idx_push_records_status ON push_records(status)`
+    );
+}
+
+/**
+ * Migration v17:
+ * Add push_info column to tickets table for displaying push status on card.
+ */
+async function migrate_v17(db: Database) {
+    try {
+        await db.execute(`ALTER TABLE tickets ADD COLUMN push_info TEXT NOT NULL DEFAULT '[]'`);
+    } catch {
+        // Column may already exist
+    }
+}
+
+/**
+ * Migration v18:
+ * Extend the remote push schema with the field-source abstraction:
+ *   push_targets.payload_fields      — structured FieldBinding list
+ *   push_targets.variables           — PushVariableDef list resolved at push time
+ *   push_records.variables_snapshot  — variable values used for a given push
+ */
+async function migrate_v18(db: Database) {
+    const targetCols = await db.select<Array<{ name: string }>>(
+        `PRAGMA table_info(push_targets)`,
+    );
+    const hasTargetTable = targetCols.length > 0;
+
+    if (hasTargetTable) {
+        const names = new Set(targetCols.map((c) => c.name));
+        if (!names.has('payload_fields')) {
+            await db.execute(
+                `ALTER TABLE push_targets ADD COLUMN payload_fields TEXT NOT NULL DEFAULT '[]'`,
+            );
+        }
+        if (!names.has('variables')) {
+            await db.execute(
+                `ALTER TABLE push_targets ADD COLUMN variables TEXT NOT NULL DEFAULT '[]'`,
+            );
+        }
+    }
+
+    const recordCols = await db.select<Array<{ name: string }>>(
+        `PRAGMA table_info(push_records)`,
+    );
+    if (recordCols.length > 0) {
+        const names = new Set(recordCols.map((c) => c.name));
+        if (!names.has('variables_snapshot')) {
+            await db.execute(
+                `ALTER TABLE push_records ADD COLUMN variables_snapshot TEXT`,
+            );
+        }
+    }
+}
+
+/**
+ * Migration v19:
+ * Extend push_targets with the editor-scope and query-parameter configuration:
+ *   query_params  — FieldBinding list appended to the request URL
+ *   source_config — which sources / catalog fields the editor offers
+ */
+async function migrate_v19(db: Database) {
+    const cols = await db.select<Array<{ name: string }>>(
+        `PRAGMA table_info(push_targets)`,
+    );
+    if (cols.length === 0) return;
+
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('query_params')) {
+        await db.execute(
+            `ALTER TABLE push_targets ADD COLUMN query_params TEXT NOT NULL DEFAULT '[]'`,
+        );
+    }
+    if (!names.has('source_config')) {
+        await db.execute(
+            `ALTER TABLE push_targets ADD COLUMN source_config TEXT NOT NULL DEFAULT ''`,
+        );
+    }
+}
+
 export async function runMigrations(db: Database): Promise<void> {
     const rows = await db.select<{ schema_version: number }[]>(
         `SELECT schema_version FROM workspace_meta WHERE id = 1`
@@ -532,6 +665,22 @@ export async function runMigrations(db: Database): Promise<void> {
 
     if (current < 15) {
         await migrate_v15(db);
+    }
+
+    if (current < 16) {
+        await migrate_v16(db);
+    }
+
+    if (current < 17) {
+        await migrate_v17(db);
+    }
+
+    if (current < 18) {
+        await migrate_v18(db);
+    }
+
+    if (current < 19) {
+        await migrate_v19(db);
     }
 
     await db.execute(

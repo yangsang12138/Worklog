@@ -30,6 +30,7 @@
         Warning,
         ColorPalette,
         Document,
+        SendAlt,
     } from "carbon-icons-svelte";
     import {
         type Ticket,
@@ -42,6 +43,7 @@
 
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import * as m from "$lib/paraglide/messages.js";
+    import PushTicketModal from "../push/push-ticket-modal.svelte";
 
     let {
         ticket,
@@ -141,6 +143,12 @@
             },
         };
     }
+
+    // ── Push State ──────────────────────────────────────────────────────────
+    let pushModalOpen = $state(false);
+    let _pushInfo = $derived<Array<{ target_name: string; status: string }>>(
+        (ticket as any).push_info ? JSON.parse((ticket as any).push_info) : []
+    );
 </script>
 
 <article 
@@ -224,6 +232,10 @@
                             on:click={() => onEdit?.(ticket)}
                         />
                         <OverflowMenuItem
+                            text="远程推送"
+                            on:click={() => (pushModalOpen = true)}
+                        />
+                        <OverflowMenuItem
                             text={m.ticket_ctx_delete()}
                             danger
                             on:click={() => onDelete?.(ticket.id)}
@@ -284,11 +296,37 @@
                     {/if}
                 </div>
             </div>
+
+            <!-- Push status display -->
+            {#if _pushInfo.length > 0}
+                <div class="ticket-push-status">
+                    {#each _pushInfo as pi}
+                        <span
+                            class="push-badge"
+                            class:push-success={pi.status === "success"}
+                            class:push-failed={pi.status === "failed"}
+                            title="已推送到 {pi.target_name}"
+                        >
+                            <SendAlt size={10} />
+                            {pi.target_name}
+                        </span>
+                    {/each}
+                </div>
+            {/if}
         </div>
     {:else}
         <div class="ticket-skeleton"></div>
     {/if}
 </article>
+
+<!-- Push Ticket Modal -->
+{#if pushModalOpen}
+    <PushTicketModal
+        ticket={ticket}
+        open={pushModalOpen}
+        onClose={() => (pushModalOpen = false)}
+    />
+{/if}
 
 <style>
     .ticket-card {
@@ -454,5 +492,39 @@
         height: 120px;
         width: 100%;
         background: var(--cds-ui-01);
+    }
+
+    /* ── Push Status Badges ───────────────────────────────────────────────── */
+    .ticket-push-status {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+        padding: 0.25rem 0.75rem 0.5rem 0.875rem;
+        border-top: 1px solid var(--cds-ui-03);
+        margin-top: 0.25rem;
+    }
+
+    .push-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.1875rem;
+        padding: 0.0625rem 0.375rem;
+        font-size: 0.625rem;
+        font-weight: 500;
+        border-radius: 2px;
+        color: var(--cds-text-02);
+        background: var(--cds-ui-02);
+        white-space: nowrap;
+        cursor: default;
+    }
+
+    .push-badge.push-success {
+        color: var(--cds-support-02);
+        background: color-mix(in srgb, var(--cds-support-02) 15%, transparent);
+    }
+
+    .push-badge.push-failed {
+        color: var(--cds-support-01);
+        background: color-mix(in srgb, var(--cds-support-01) 15%, transparent);
     }
 </style>

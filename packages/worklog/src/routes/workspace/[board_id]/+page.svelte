@@ -6,6 +6,7 @@
     import CalendarView from "$lib/components/app/calendar/calendar-board.svelte";
     import BoardDocs from "$lib/components/app/board/board-docs.svelte";
     import BoardTabManager from "$lib/components/app/board/board-tab-manager.svelte";
+    import PushRecordBoard from "$lib/components/app/push/push-record-board.svelte";
     import {
         Loading,
         InlineNotification,
@@ -18,6 +19,7 @@
         ChartBarFloating,
         Calendar,
         Document,
+        SendAlt,
         WarningHex,
         ArrowLeft,
         Search,
@@ -78,6 +80,7 @@
         timeline: null,
         calendar: null,
         docs: null,
+        push: null,
     });
     let indicatorEl = $state<HTMLElement | null>(null);
 
@@ -178,6 +181,7 @@
         timeline: () => m.board_tab_timeline(),
         calendar: () => m.board_tab_calendar(),
         docs: () => m.board_tab_docs(),
+        push: () => "远程推送",
     };
 
     function selectTab(tab: TabType) {
@@ -273,6 +277,8 @@
                                 <Calendar size={16} />
                             {:else if tab === "docs"}
                                 <Document size={16} />
+                            {:else if tab === "push"}
+                                <SendAlt size={16} />
                             {/if}
                             <span>{TAB_LABELS[tab]()}</span>
                         </button>
@@ -340,6 +346,8 @@
                         workspacePath={shell.workspace.path ?? ""}
                         boardId={board.id}
                     />
+                {:else if selectedTabType === "push" && board}
+                    <PushRecordBoard boardId={board.id} />
                 {/if}
             </div>
         </section>

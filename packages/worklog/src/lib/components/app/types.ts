@@ -100,7 +100,7 @@ export type UpdateAppSettingsInput = Partial<
     Pick<AppSettings, "author_name" | "default_branch" | "autosave_seconds">
 >;
 
-export type TabType = "kanban" | "table" | "timeline" | "calendar" | "docs";
+export type TabType = "kanban" | "table" | "timeline" | "calendar" | "docs" | "push";
 
 // Default tabs for a new board — only Kanban is enabled
 // Users opt in to additional views
@@ -114,6 +114,7 @@ export const ALL_BOARD_TABS: TabType[] = [
     "timeline",
     "calendar",
     "docs",
+    "push",
 ];
 
 export interface Board {

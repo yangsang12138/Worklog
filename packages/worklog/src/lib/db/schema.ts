@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 19;
 
 export const CREATE_TABLES = `
   CREATE TABLE IF NOT EXISTS workspace_meta (
@@ -90,4 +90,49 @@ export const CREATE_TABLES = `
   CREATE INDEX IF NOT EXISTS idx_events_entity ON events(entity_type, entity_id);
   CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
   CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+
+  CREATE TABLE IF NOT EXISTS push_targets (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    endpoint_url        TEXT NOT NULL,
+    http_method         TEXT NOT NULL DEFAULT 'POST',
+    headers             TEXT NOT NULL DEFAULT '{}',
+    body_template       TEXT NOT NULL DEFAULT '',
+    body_content_type   TEXT NOT NULL DEFAULT 'application/json',
+    field_mapping       TEXT NOT NULL DEFAULT '{}',
+    payload_fields      TEXT NOT NULL DEFAULT '[]',
+    query_params        TEXT NOT NULL DEFAULT '[]',
+    variables           TEXT NOT NULL DEFAULT '[]',
+    source_config       TEXT NOT NULL DEFAULT '',
+    timeout_ms          INTEGER NOT NULL DEFAULT 30000,
+    retry_count         INTEGER NOT NULL DEFAULT 0,
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    last_push_at        TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS push_records (
+    id              TEXT PRIMARY KEY,
+    ticket_id       TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    board_id        TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+    target_id       TEXT NOT NULL REFERENCES push_targets(id) ON DELETE CASCADE,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'success', 'failed')),
+    request_url     TEXT NOT NULL,
+    request_body    TEXT,
+    variables_snapshot TEXT,
+    response_status INTEGER,
+    response_body   TEXT,
+    error_message   TEXT,
+    duration_ms     INTEGER,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_push_records_ticket  ON push_records(ticket_id);
+  CREATE INDEX IF NOT EXISTS idx_push_records_board   ON push_records(board_id);
+  CREATE INDEX IF NOT EXISTS idx_push_records_target  ON push_records(target_id);
+  CREATE INDEX IF NOT EXISTS idx_push_records_status  ON push_records(status);
 `;
