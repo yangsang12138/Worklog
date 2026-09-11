@@ -23,6 +23,11 @@ export interface PushTarget {
     variables: string;
     /** JSON PushSourceConfig — which sources / catalog fields are offered in the editor */
     source_config: string;
+    /**
+     * JSON PushSuccessCheck — how the target's response is judged.
+     * Empty string means "any 2xx counts" (the legacy behaviour).
+     */
+    success_check: string;
     timeout_ms: number;
     retry_count: number;
     enabled: number;
@@ -45,6 +50,7 @@ export type CreatePushTargetInput = Pick<PushTarget, 'name' | 'endpoint_url'> &
             | 'query_params'
             | 'variables'
             | 'source_config'
+            | 'success_check'
             | 'timeout_ms'
             | 'retry_count'
             | 'enabled'
@@ -66,6 +72,7 @@ export type UpdatePushTargetInput = Partial<
         | 'query_params'
         | 'variables'
         | 'source_config'
+        | 'success_check'
         | 'timeout_ms'
         | 'retry_count'
         | 'enabled'

@@ -649,5 +649,17 @@
   "push_field_app_workspace_name": "Workspace name",
   "push_field_app_author_name": "Current user",
   "push_field_app_version": "Worklog version",
-  "push_field_app_pushed_at": "Push time"
+  "push_field_app_pushed_at": "Push time",
+  "workspace_switcher_aria_label": "Workspace menu",
+  "workspace_switch": "Switch workspace",
+  "workspace_switch_subtitle": "Choose a different folder as the active workspace",
+  "workspace_current": "Current workspace",
+  "workspace_recent": "Recent workspaces",
+  "workspace_close": "Close workspace",
+  "workspace_switched": "Workspace switched",
+  "workspace_switched_msg": "Current workspace: {name}",
+  "workspace_closed": "Workspace closed",
+  "workspace_switch_failed": "Unable to switch workspace",
+  "workspace_folder_missing": "That workspace folder no longer exists. It may have been moved, renamed, or deleted.",
+  "settings_workspace_actions": "Workspace actions"
 }

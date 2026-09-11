@@ -4,6 +4,7 @@ import { documentDir } from '@tauri-apps/api/path';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import type { PushTarget, CreatePushTargetInput } from './types';
 import { PushTargetRepo } from './push-target.repo';
+import { parseSuccessCheck, serializeSuccessCheck } from './success-check';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Push target configuration import / export.
@@ -30,6 +31,8 @@ export interface PortablePushTarget {
     query_params: string;
     variables: string;
     source_config: string;
+    /** JSON PushSuccessCheck; empty string means "any 2xx counts". */
+    success_check: string;
     timeout_ms: number;
     retry_count: number;
     enabled: number;
@@ -66,6 +69,7 @@ export function toPortable(target: PushTarget): PortablePushTarget {
         query_params: target.query_params || '[]',
         variables: target.variables || '[]',
         source_config: target.source_config ?? '',
+        success_check: target.success_check ?? '',
         timeout_ms: target.timeout_ms ?? 30000,
         retry_count: target.retry_count ?? 0,
         enabled: target.enabled ?? 1,
@@ -145,6 +149,11 @@ export function sanitizePortable(raw: unknown): PortablePushTarget | null {
         query_params: asJsonString(o.query_params, '[]'),
         variables: asJsonString(o.variables, '[]'),
         source_config: asJsonString(o.source_config, ''),
+        // Round-trip through the parser so a hand edited file with a broken rule
+        // degrades to "no rule" instead of poisoning every future push.
+        success_check: serializeSuccessCheck(
+            parseSuccessCheck(asString(o.success_check, '')),
+        ),
         timeout_ms: asNumber(o.timeout_ms, 30000),
         retry_count: asNumber(o.retry_count, 0),
         enabled: o.enabled === 0 || o.enabled === false ? 0 : 1,

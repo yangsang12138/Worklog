@@ -592,5 +592,17 @@
   "sync_merge_conflict_message": "Conflit de fusion détecté. Utilisez le pull forcé pour remplacer les données locales.",
   "sync_force_push_success": "Push forcé réussi. Le distant a été remplacé.",
   "sync_force_pull_success": "Pull forcé réussi. {boards} tableaux et {tickets} tickets importés.",
-  "sync_pull_success_message": "Pull réussi. Tableaux : +{boardsCreated} ~{boardsUpdated}. Tickets : +{ticketsCreated} ~{ticketsUpdated}."
+  "sync_pull_success_message": "Pull réussi. Tableaux : +{boardsCreated} ~{boardsUpdated}. Tickets : +{ticketsCreated} ~{ticketsUpdated}.",
+  "workspace_switcher_aria_label": "Menu de l'espace de travail",
+  "workspace_switch": "Changer d'espace de travail",
+  "workspace_switch_subtitle": "Choisir un autre dossier comme espace de travail actif",
+  "workspace_current": "Espace de travail actuel",
+  "workspace_recent": "Espaces de travail récents",
+  "workspace_close": "Fermer l'espace de travail",
+  "workspace_switched": "Espace de travail changé",
+  "workspace_switched_msg": "Espace de travail actuel : {name}",
+  "workspace_closed": "Espace de travail fermé",
+  "workspace_switch_failed": "Impossible de changer d'espace de travail",
+  "workspace_folder_missing": "Ce dossier d'espace de travail n'existe plus. Il a peut-être été déplacé, renommé ou supprimé.",
+  "settings_workspace_actions": "Actions de l'espace de travail"
 }

@@ -78,11 +78,13 @@
         Document,
         Table,
         Folder,
+        FolderOpen,
         Download,
         Upload,
         SendAlt,
     } from "carbon-icons-svelte";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
+    import { useWorkspaceActions } from "$lib/hooks/workspace-actions.svelte";
     import { seedDatabase, seedLazyLoadingTest } from "$lib/db/seed";
     import { EventRepo, type EventRecord } from "$lib/db";
     import { Time } from "carbon-icons-svelte";
@@ -125,6 +127,7 @@
 
     const workspace = getWorkspace();
     const { ticketTypesApi } = getWorkspaceShellContext();
+    const workspaceActions = useWorkspaceActions();
     const syncConfig = getSyncConfig();
     const appZoom = getAppZoom();
     const appAppearance = useAppAppearance();
@@ -400,6 +403,15 @@
 
     function refreshWorkspaceState() {
         void workspace.init();
+    }
+
+    // ── Workspace switching ────────────────────────────────────────────────
+    function handleSwitchWorkspace() {
+        void workspaceActions.switchWorkspace();
+    }
+
+    function handleCloseWorkspace() {
+        void workspaceActions.closeWorkspace();
     }
 
     // ── Export / Import ────────────────────────────────────────────────────
@@ -700,6 +712,29 @@
                                         value={version}
                                         readonly
                                     />
+                                </div>
+
+                                <!-- Workspace is switchable, not just readable -->
+                                <div class="workspace-actions">
+                                    <Button
+                                        kind="ghost"
+                                        size="small"
+                                        icon={FolderOpen}
+                                        onclick={handleSwitchWorkspace}
+                                    >
+                                        {m.workspace_switch()}
+                                    </Button>
+                                    <Button
+                                        kind="danger-ghost"
+                                        size="small"
+                                        icon={Close}
+                                        onclick={handleCloseWorkspace}
+                                    >
+                                        {m.workspace_close()}
+                                    </Button>
+                                    <span class="workspace-actions-hint">
+                                        {m.workspace_switch_subtitle()}
+                                    </span>
                                 </div>
                             </div>
                         </section>
@@ -2030,6 +2065,21 @@
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
         gap: 1.5rem;
+    }
+
+    /* ── Workspace actions (switch / close) ───────────────────────────────── */
+    .workspace-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid var(--cds-ui-03);
+    }
+
+    .workspace-actions-hint {
+        font-size: 0.75rem;
+        color: var(--cds-text-secondary);
     }
 
     .control-box {

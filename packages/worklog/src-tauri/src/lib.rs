@@ -13,6 +13,10 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        // Remote push must not go through the webview fetch stack: third-party
+        // endpoints answer the CORS preflight with 403 and WebKit then reports
+        // the opaque "Load failed". This plugin issues the request from Rust.
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {

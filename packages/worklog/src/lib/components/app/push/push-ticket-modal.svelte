@@ -10,7 +10,7 @@
         PushVariableValue,
     } from "$lib/push/types";
     import { getWorkspace } from "$lib/hooks/workspace.svelte";
-    import { getPushHook, PushTargetRepo } from "$lib/push";
+    import { getPushHook, PushTargetRepo, extractResponseMessage } from "$lib/push";
     import {
         parseVariables,
         initialVariableValues,
@@ -161,6 +161,27 @@
         result = null;
         onClose();
     }
+
+    /** Pretty-print JSON bodies; leave anything that is not JSON untouched. */
+    function formatBody(text: string | null | undefined): string {
+        if (!text) return "";
+        try {
+            return JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+            return text;
+        }
+    }
+
+    /**
+     * A 2xx means the request was accepted by the gateway, not that the target
+     * system accepted the submission — so the response body is the verdict the
+     * user actually needs to read.
+     */
+    const responseBody = $derived(result?.record?.response_body ?? null);
+    const responseStatus = $derived(result?.record?.response_status ?? null);
+    const targetVerdict = $derived(
+        extractResponseMessage(responseBody),
+    );
 </script>
 
 {#if open}
@@ -189,8 +210,13 @@
                     {#if result.success}
                         <Checkmark size={20} />
                         <div>
-                            <strong>推送成功</strong>
+                            <strong>请求成功</strong>
                             <p>{result.message}</p>
+                            {#if responseBody}
+                                <p class="banner-note">
+                                    是否被受理以「目标系统返回」为准。
+                                </p>
+                            {/if}
                         </div>
                     {:else}
                         <Warning size={20} />
@@ -201,13 +227,33 @@
                     {/if}
                 </div>
 
+                <!-- What the target system actually answered -->
+                <section class="response-block">
+                    <div class="response-head">
+                        <span class="response-title">目标系统返回</span>
+                        {#if responseStatus !== null}
+                            <code class="response-status">HTTP {responseStatus}</code>
+                        {/if}
+                        {#if targetVerdict}
+                            <span class="response-verdict">{targetVerdict}</span>
+                        {/if}
+                    </div>
+                    {#if responseBody}
+                        <pre class="payload-pre">{formatBody(responseBody)}</pre>
+                    {:else}
+                        <p class="response-empty">
+                            {responseStatus === null
+                                ? "未收到响应（请求没能完成）。"
+                                : "目标系统返回了空响应体。"}
+                        </p>
+                    {/if}
+                </section>
+
                 {#if result.record?.request_body}
                     <details class="payload-details">
                         <summary>查看实际发送的请求体</summary>
-                        <pre class="payload-pre">{JSON.stringify(
-                                JSON.parse(result.record.request_body),
-                                null,
-                                2,
+                        <pre class="payload-pre">{formatBody(
+                                result.record.request_body,
                             )}</pre>
                     </details>
                 {/if}
@@ -514,6 +560,58 @@
         font-size: 0.8125rem;
         opacity: 0.9;
         word-break: break-word;
+    }
+
+    .result-banner .banner-note {
+        margin-top: 0.375rem;
+        font-size: 0.75rem;
+        opacity: 0.75;
+    }
+
+    /* ── Target system response ───────────────────────────────────────────── */
+    .response-block {
+        display: flex;
+        flex-direction: column;
+        gap: 0.375rem;
+        padding: 0.75rem;
+        background: var(--cds-ui-01);
+        border: 1px solid var(--cds-ui-03);
+        border-left: 3px solid var(--cds-interactive-01, #0f62fe);
+        border-radius: 4px;
+    }
+
+    .response-head {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .response-title {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--cds-text-01);
+    }
+
+    .response-status {
+        font-family: var(--cds-code-01-font-family);
+        font-size: 0.75rem;
+        padding: 0.0625rem 0.375rem;
+        border-radius: 2px;
+        background: var(--cds-ui-02);
+        color: var(--cds-text-02);
+    }
+
+    .response-verdict {
+        font-size: 0.75rem;
+        color: var(--cds-text-02);
+        word-break: break-word;
+    }
+
+    .response-empty {
+        margin: 0;
+        font-size: 0.75rem;
+        color: var(--cds-text-03);
     }
 
     /* ── Fields ───────────────────────────────────────────────────────────── */

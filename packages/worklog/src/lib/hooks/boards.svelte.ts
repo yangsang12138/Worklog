@@ -6,6 +6,10 @@ let _archivedBoards = $state<Board[]>([]);
 let _active = $state<Board | null>(null);
 let _loading = $state(false);
 
+// Workspace the state above belongs to. Switching workspaces must not leak
+// boards (or the active board) from the previous workspace into any view.
+let _loadedPath: string | null = null;
+
 export function getBoards(getWorkspacePath: () => string | null) {
     function requireWorkspacePath(): string {
         const path = getWorkspacePath();
@@ -19,7 +23,17 @@ export function getBoards(getWorkspacePath: () => string | null) {
             _boards = [];
             _archivedBoards = [];
             _active = null;
+            _loadedPath = null;
             return;
+        }
+
+        // Drop state from the previous workspace before loading the new one so
+        // views keyed off `active` never query tickets in the wrong database.
+        if (_loadedPath !== workspacePath) {
+            _loadedPath = workspacePath;
+            _boards = [];
+            _archivedBoards = [];
+            _active = null;
         }
 
         _loading = true;
