@@ -16,7 +16,6 @@
     } from "$lib/sync/sync-scheduler.svelte";
     import { getSyncConfig } from "$lib/sync/sync-config.svelte";
     import { getWorkspace } from "$lib/hooks/workspace.svelte";
-    import { getDb } from "$lib/db";
     import { formatDateTime } from "$lib/utils/date-format";
     import type { SyncOperation, SyncResult } from "$lib/sync/types";
 
@@ -29,6 +28,7 @@
     let lastResult = $state<SyncResult | null>(null);
     let resolutionOpen = $state(false);
     let forcePushOpen = $state(false);
+    let forcePullOpen = $state(false);
 
     const isSyncEnabled = $derived(
         !!syncConfig.config.remote_url && !!syncConfig.config.access_token,
@@ -51,9 +51,6 @@
             );
             lastResult = result;
             if (result.status === "success") {
-                syncConfig.updateLastSynced(result.timestamp);
-                const db = await getDb(workspace.path);
-                await syncConfig.save(db);
                 notifications.add({
                     kind: "success",
                     title:
@@ -145,7 +142,7 @@
             <div class="status-icon">
                 {#if isWorking}
                     <div class="spinner"></div>
-                {:else if syncState.lastResult?.status !== "success" && syncState.lastResult?.status !== "busy"}
+                {:else if syncState.lastResult && syncState.lastResult.status !== "success" && syncState.lastResult.status !== "busy"}
                     <ErrorFilled size={16} class="error-icon" />
                 {:else}
                     <Cloud size={16} class="cloud-icon" />
@@ -170,7 +167,7 @@
                                 ),
                             })}</span
                         >
-                    {:else if syncState.lastResult?.status !== "success" && syncState.lastResult?.status !== "busy"}
+                    {:else if syncState.lastResult && syncState.lastResult.status !== "success" && syncState.lastResult.status !== "busy"}
                         <span class="subtext">{syncState.lastResult?.message}</span>
                     {/if}
                 {/if}
@@ -209,6 +206,11 @@
         primaryButtonText={m.sync_pull_remote_data()}
         secondaryButtonText={m.sync_use_local_data()}
         on:click:button--primary={() => {
+            if (syncState.pendingResolution?.status === "conflict") {
+                resolutionOpen = false;
+                forcePullOpen = true;
+                return;
+            }
             closeResolution();
             void handleSync("pull");
         }}
@@ -223,9 +225,26 @@
         modalHeading={m.sync_force_push_confirm_title()}
         primaryButtonText={m.sync_force_push_confirm_action()}
         secondaryButtonText={m.settings_dismiss()}
+        on:click:button--secondary={() => { forcePushOpen = false; clearSyncResolution(); }}
         on:click:button--primary={() => void confirmForcePush()}
     >
         <p>{m.sync_force_push_confirm_message()}</p>
+    </Modal>
+
+    <Modal
+        danger
+        bind:open={forcePullOpen}
+        modalHeading={m.sync_force_pull_confirm_title()}
+        primaryButtonText={m.sync_force_pull_confirm_action()}
+        secondaryButtonText={m.settings_dismiss()}
+        on:click:button--secondary={() => { forcePullOpen = false; clearSyncResolution(); }}
+        on:click:button--primary={() => {
+            forcePullOpen = false;
+            clearSyncResolution();
+            void handleSync("force_pull");
+        }}
+    >
+        <p>{m.sync_force_pull_confirm_message()}</p>
     </Modal>
 {/if}
 

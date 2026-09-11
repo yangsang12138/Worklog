@@ -276,8 +276,6 @@
             );
 
             if (result.status === "success") {
-                syncConfig.updateLastSynced(result.timestamp);
-                await syncConfig.save(db);
                 notifications.add({
                     kind: "success",
                     title: m.sync_push_success(),
@@ -332,15 +330,12 @@
             );
 
             if (result.status === "success") {
-                syncConfig.updateLastSynced(result.timestamp);
-                await syncConfig.save(db);
                 notifications.add({
                     kind: "success",
                     title: m.sync_pull_success(),
                     subtitle: result.message,
                     timeout: 3000,
                 });
-                window.location.reload();
             } else if (result.status === "conflict") {
                 requestSyncResolution(result);
                 notifications.add({

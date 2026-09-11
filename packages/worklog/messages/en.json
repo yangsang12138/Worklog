@@ -661,5 +661,8 @@
   "workspace_closed": "Workspace closed",
   "workspace_switch_failed": "Unable to switch workspace",
   "workspace_folder_missing": "That workspace folder no longer exists. It may have been moved, renamed, or deleted.",
-  "settings_workspace_actions": "Workspace actions"
+  "settings_workspace_actions": "Workspace actions",
+  "sync_force_pull_confirm_title": "Replace local synced data",
+  "sync_force_pull_confirm_action": "Pull and replace",
+  "sync_force_pull_confirm_message": "This replaces local boards and tickets with the remote snapshot. Unpushed local changes will be lost. Continue?"
 }

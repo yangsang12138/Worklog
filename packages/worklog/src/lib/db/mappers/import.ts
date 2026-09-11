@@ -1,106 +1,63 @@
 import type Database from '@tauri-apps/plugin-sql';
 import type { WorklogSnapshot, ImportResult, ImportStrategy } from './types';
+import { validateSnapshot } from './validate-snapshot';
+import { executeTransaction } from '../transaction';
 
-/**
- * Imports a WorklogSnapshot into the database.
- *
- * @param db       Active database connection
- * @param snapshot The snapshot to import
- * @param strategy 'merge' = upsert by ID, 'replace' = wipe and insert
- */
+// Quote values in the SQL batch submitted to the pinned transaction command.
+function literal(value: unknown): string {
+    if (value === null || value === undefined) return 'NULL';
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    if (typeof value !== 'string' || value.includes('\0')) throw new Error('Invalid SQL value');
+    return `'${value.replaceAll("'", "''")}'`;
+}
+
 export async function importSnapshot(
     db: Database,
-    snapshot: WorklogSnapshot,
+    input: WorklogSnapshot,
     strategy: ImportStrategy = 'merge',
 ): Promise<ImportResult> {
-    const result: ImportResult = {
-        boardsCreated: 0,
-        boardsUpdated: 0,
-        ticketsCreated: 0,
-        ticketsUpdated: 0,
-        ticketsSkipped: 0,
+    const snapshot = validateSnapshot(input);
+    const existingBoards = new Set((await db.select<Array<{ id: string }>>('SELECT id FROM boards')).map(b => b.id));
+    const existingTickets = new Set((await db.select<Array<{ id: string }>>('SELECT id FROM tickets')).map(t => t.id));
+    const result: ImportResult = { boardsCreated: 0, boardsUpdated: 0, ticketsCreated: 0, ticketsUpdated: 0, ticketsSkipped: 0 };
+    const statements: string[] = [];
+    const upsert = (table: string, record: Record<string, unknown>) => {
+        const keys = Object.keys(record);
+        statements.push(`INSERT INTO ${table} (${keys.join(', ')})
+            VALUES (${keys.map(key => literal(record[key])).join(', ')})
+            ON CONFLICT(id) DO UPDATE SET ${keys.filter(key => key !== 'id').map(key => `${key} = excluded.${key}`).join(', ')};`);
     };
-
+    if (snapshot.app_settings) {
+        const s = snapshot.app_settings;
+        if (!Number.isFinite(s.autosave_seconds) || s.autosave_seconds < 0) throw new Error('Invalid snapshot settings');
+        upsert('app_settings', {
+            id: 1, author_name: s.author_name, default_branch: s.default_branch,
+            autosave_seconds: s.autosave_seconds, created_at: s.created_at, updated_at: s.updated_at,
+        });
+    }
+    if (snapshot.workspace_meta) {
+        const meta = snapshot.workspace_meta;
+        // Schema version and sync credentials belong to the local installation.
+        statements.push(`UPDATE workspace_meta SET name = ${literal(meta.name)}, created_at = ${literal(meta.created_at)} WHERE id = 1;`);
+    }
+    for (const { board, tickets } of snapshot.boards) {
+        existingBoards.has(board.id) ? result.boardsUpdated++ : result.boardsCreated++;
+        upsert('boards', { ...board });
+        for (const ticket of tickets) {
+            existingTickets.has(ticket.id) ? result.ticketsUpdated++ : result.ticketsCreated++;
+            upsert('tickets', { ...ticket, labels: JSON.stringify(ticket.labels), comments: JSON.stringify(ticket.comments) });
+        }
+    }
     if (strategy === 'replace') {
-        // Wipe all existing data (order matters for FK constraints)
-        await db.execute(`DELETE FROM tickets`);
-        await db.execute(`DELETE FROM boards`);
+        // Delete only missing entities; updating an unchanged ticket must not
+        // cascade-delete its local push history.
+        const boardIds = snapshot.boards.map(({ board }) => literal(board.id));
+        const ticketIds = snapshot.boards.flatMap(({ tickets }) => tickets.map(t => literal(t.id)));
+        statements.push(`DELETE FROM tickets${ticketIds.length ? ` WHERE id NOT IN (${ticketIds.join(', ')})` : ''};`);
+        statements.push(`DELETE FROM boards${boardIds.length ? ` WHERE id NOT IN (${boardIds.join(', ')})` : ''};`);
     }
-
-    const now = new Date().toISOString();
-
-    // ── Import Boards ──────────────────────────────────────────────────────
-    for (const boardSnap of snapshot.boards) {
-        const board = boardSnap.board;
-
-        // Check if board already exists
-        const existing = await db.select<any[]>(
-            `SELECT id FROM boards WHERE id = ?`, [board.id]
-        );
-
-        if (existing.length > 0) {
-            if (strategy === 'merge') {
-                await db.execute(
-                    `UPDATE boards SET name = ?, description = ?, updated_at = ? WHERE id = ?`,
-                    [board.name, board.description, board.updated_at || now, board.id]
-                );
-                result.boardsUpdated++;
-            }
-        } else {
-            await db.execute(
-                `INSERT INTO boards (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-                [board.id, board.name, board.description, board.created_at || now, board.updated_at || now]
-            );
-            result.boardsCreated++;
-        }
-
-        // ── Import Tickets for this Board ──────────────────────────────────
-        for (const ticket of boardSnap.tickets) {
-            const existingTicket = await db.select<any[]>(
-                `SELECT id FROM tickets WHERE id = ?`, [ticket.id]
-            );
-
-            const labelsJson = JSON.stringify(ticket.labels ?? []);
-            const commentsJson = JSON.stringify(ticket.comments ?? []);
-
-            if (existingTicket.length > 0) {
-                if (strategy === 'merge') {
-                    await db.execute(
-                        `UPDATE tickets SET
-                            board_id = ?, title = ?, description = ?, status = ?,
-                            priority = ?, ticket_type = ?, position = ?,
-                            due_date = ?, start_date = ?, labels = ?, comments = ?,
-                            updated_at = ?
-                        WHERE id = ?`,
-                        [
-                            ticket.board_id, ticket.title, ticket.description, ticket.status,
-                            ticket.priority, ticket.ticket_type, ticket.position,
-                            ticket.due_date, ticket.start_date, labelsJson, commentsJson,
-                            ticket.updated_at || now, ticket.id
-                        ]
-                    );
-                    result.ticketsUpdated++;
-                } else {
-                    result.ticketsSkipped++;
-                }
-            } else {
-                await db.execute(
-                    `INSERT INTO tickets (
-                        id, board_id, title, description, status, priority,
-                        ticket_type, position, due_date, start_date,
-                        labels, comments, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        ticket.id, ticket.board_id, ticket.title, ticket.description,
-                        ticket.status, ticket.priority, ticket.ticket_type, ticket.position,
-                        ticket.due_date, ticket.start_date, labelsJson, commentsJson,
-                        ticket.created_at || now, ticket.updated_at || now
-                    ]
-                );
-                result.ticketsCreated++;
-            }
-        }
+    if (statements.length) {
+        await executeTransaction(db, statements.join('\n'));
     }
-
     return result;
 }

@@ -604,5 +604,8 @@
   "workspace_closed": "Espace de travail fermé",
   "workspace_switch_failed": "Impossible de changer d'espace de travail",
   "workspace_folder_missing": "Ce dossier d'espace de travail n'existe plus. Il a peut-être été déplacé, renommé ou supprimé.",
-  "settings_workspace_actions": "Actions de l'espace de travail"
+  "settings_workspace_actions": "Actions de l'espace de travail",
+  "sync_force_pull_confirm_title": "Remplacer les données locales",
+  "sync_force_pull_confirm_action": "Récupérer et remplacer",
+  "sync_force_pull_confirm_message": "Les tableaux et tickets locaux seront remplacés par la version distante. Les modifications non envoyées seront perdues. Continuer ?"
 }

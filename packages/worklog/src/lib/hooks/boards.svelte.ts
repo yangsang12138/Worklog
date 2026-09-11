@@ -40,11 +40,8 @@ export function getBoards(getWorkspacePath: () => string | null) {
         try {
             const db = await getDb(workspacePath);
             // Load active boards only
-            _boards = await BoardRepo.listBoards(db, { limit: 50, archived: false });
-            // Auto-select first board if none active
-            if (!_active && _boards.length > 0) {
-                _active = _boards[0];
-            }
+            _boards = await BoardRepo.listBoards(db, { limit: Math.max(50, _boards.length), archived: false });
+            _active = _boards.find(board => board.id === _active?.id) ?? _boards[0] ?? null;
         } finally {
             _loading = false;
         }

@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:sync": "node --test --experimental-strip-types tests/sync-git.integration.test.mjs",
+    "test:sync:engine": "bun test --timeout 30000 tests/sync-engine.integration.test.mjs && bun test tests/sync-scheduler.test.mjs && node --test --experimental-strip-types tests/snapshot-import.integration.test.mjs",
+    "test:boards": "node --test --experimental-strip-types tests/board-delete.integration.test.mjs",
     "check": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --emit-ts-declarations && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --emit-ts-declarations && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",

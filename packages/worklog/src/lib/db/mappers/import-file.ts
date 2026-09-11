@@ -1,6 +1,6 @@
 import type Database from '@tauri-apps/plugin-sql';
 import { open } from '@tauri-apps/plugin-dialog';
-import { readTextFile, readDir } from '@tauri-apps/plugin-fs';
+import { readTextFile, readDir, exists } from '@tauri-apps/plugin-fs';
 import type { ImportResult, ImportStrategy } from './types';
 import { parseSnapshotFromSingleJson, parseSnapshotFromFolder } from './deserialize-json';
 import { csvToTickets } from './deserialize-csv';
@@ -119,7 +119,7 @@ export async function importFromFolder(
     }
 
     // Read boards/ subdirectory if it exists
-    try {
+    if (await exists(`${folderPath}/boards`)) {
         const boardEntries = await readDir(`${folderPath}/boards`);
         for (const entry of boardEntries) {
             if (entry.name && (entry.name.endsWith('.json') || entry.name.endsWith('.csv'))) {
@@ -127,8 +127,6 @@ export async function importFromFolder(
                 files.set(`boards/${entry.name}`, content);
             }
         }
-    } catch {
-        // boards/ directory doesn't exist — that's fine
     }
 
     // Check if there are CSV board files (folder-mode CSV export)

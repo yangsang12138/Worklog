@@ -1,6 +1,7 @@
 import type { WorkspaceMeta } from '$lib/components/app/types';
 import { getDb, closeDb, WorkspaceRepo } from '$lib/db';
 import { runMigrations } from '$lib/db/migrate';
+import { syncState } from '$lib/sync/sync-scheduler.svelte';
 import * as m from '$lib/paraglide/messages.js';
 
 const WORKSPACE_PATH_KEY = 'last_workspace_path';
@@ -214,6 +215,10 @@ export function getWorkspace() {
         const path = normalizePath(rawPath);
 
         if (path === _path && _status === 'ready') return true;
+        if (syncState.isSyncing) {
+            _error = m.sync_operation_busy();
+            return false;
+        }
 
         if (!(await ensureFolderExists(path))) {
             forgetRecentPath(path);
@@ -228,6 +233,10 @@ export function getWorkspace() {
     }
 
     async function open_workspace(rawPath: string): Promise<boolean> {
+        if (syncState.isSyncing) {
+            _error = m.sync_operation_busy();
+            return false;
+        }
         try {
             _status = 'loading';
             _error = null;
@@ -253,6 +262,7 @@ export function getWorkspace() {
     }
 
     async function close() {
+        if (syncState.isSyncing) throw new Error(m.sync_operation_busy());
         await closeDb();
         clearSavedWorkspacePath();
         _path = null;
@@ -261,12 +271,16 @@ export function getWorkspace() {
         _error = null;
     }
 
+    async function refreshMeta() {
+        if (_path) _meta = await WorkspaceRepo.getWorkspaceMeta(await getDb(_path));
+    }
+
     return {
         get path() { return _path },
         get meta() { return _meta },
         get status() { return _status },
         get error() { return _error },
         get recents() { return _recents },
-        init, pick, openPath, close
+        init, pick, openPath, close, refreshMeta
     };
 }

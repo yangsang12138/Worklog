@@ -28,7 +28,10 @@ export class GitClient {
      * Throws on non-zero exit code.
      */
     private async exec(...args: string[]): Promise<string> {
-        const cmd = Command.create('git', args, { cwd: this.workDir });
+        const cmd = Command.create('git', args, {
+            cwd: this.workDir,
+            env: { GIT_TERMINAL_PROMPT: '0' },
+        });
         const output = await cmd.execute();
 
         if (output.code !== 0) {
@@ -59,8 +62,8 @@ export class GitClient {
      */
     async isRepo(): Promise<boolean> {
         try {
-            await this.exec('rev-parse', '--is-inside-work-tree');
-            return true;
+            const prefix = await this.exec('rev-parse', '--show-prefix');
+            return prefix === '';
         } catch {
             return false;
         }
@@ -158,7 +161,7 @@ export class GitClient {
             'fetch',
             '--no-tags',
             'origin',
-            `refs/heads/${branch}:refs/remotes/origin/${branch}`,
+            `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
         );
     }
 
@@ -240,5 +243,27 @@ export class GitClient {
      */
     async hardReset(branch: string): Promise<void> {
         await this.exec('reset', '--hard', `origin/${branch}`);
+    }
+
+    async mergeBase(branch: string): Promise<string | null> {
+        if (!(await this.hasCommits())) return null;
+        const output = await Command.create('git', [
+            'merge-base', 'HEAD', `refs/remotes/origin/${branch}`,
+        ], { cwd: this.workDir }).execute();
+        if (output.code === 1) return null; // Unrelated repositories.
+        if (output.code !== 0) throw new Error(output.stderr || output.stdout);
+        return output.stdout.trim();
+    }
+
+    async snapshotFiles(revision: string): Promise<Map<string, string>> {
+        const paths = (await this.exec('ls-tree', '-r', '--name-only', revision)).split('\n');
+        const files = new Map<string, string>();
+        for (const path of paths) {
+            if (['metadata.json', 'workspace.json', 'settings.json'].includes(path)
+                || /^boards\/[^/]+\.json$/.test(path)) {
+                files.set(path, await this.exec('show', `${revision}:${path}`));
+            }
+        }
+        return files;
     }
 }

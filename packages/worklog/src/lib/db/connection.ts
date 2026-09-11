@@ -4,8 +4,31 @@ import { CREATE_TABLES } from './schema';
 
 let _db: Database | null = null;
 let _dbWorkspacePath: string | null = null;
+let _opening: Promise<Database> | null = null;
 
 export async function getDb(workspacePath: string): Promise<Database> {
+    // Concurrent board/ticket loads must wait for migrations and schema repair.
+    while (_opening) await _opening;
+    if (_db && _dbWorkspacePath === workspacePath) return _db;
+
+    _opening = openDb(workspacePath);
+    try {
+        return await _opening;
+    } catch (error) {
+        // A failed repair must not leave a cached, partially initialized pool.
+        try {
+            await closeDb();
+        } catch {
+            _db = null;
+            _dbWorkspacePath = null;
+        }
+        throw error;
+    } finally {
+        _opening = null;
+    }
+}
+
+async function openDb(workspacePath: string): Promise<Database> {
     if (_db && _dbWorkspacePath === workspacePath) return _db;
 
     if (_db && _dbWorkspacePath !== workspacePath) {

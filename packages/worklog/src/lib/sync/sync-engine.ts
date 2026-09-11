@@ -1,10 +1,13 @@
 import type Database from '@tauri-apps/plugin-sql';
-import { mkdir, exists, writeTextFile } from '@tauri-apps/plugin-fs';
+import { mkdir, exists, writeTextFile, readDir, remove } from '@tauri-apps/plugin-fs';
 import { GitClient, type RemoteInfo } from './git-client';
 import type { SyncConfig, SyncResult } from './types';
 import { extractSnapshot } from '$lib/db/mappers/extract';
 import { snapshotToFolderJsonFiles } from '$lib/db/mappers/serialize-json';
-import { importFromFolder } from '$lib/db/mappers/import-file';
+import { importSnapshot } from '$lib/db/mappers/import';
+import { parseSnapshotFromFolder } from '$lib/db/mappers/deserialize-json';
+import { validateSnapshot } from '$lib/db/mappers/validate-snapshot';
+import { mergeSnapshots } from './merge-snapshots';
 import * as m from '$lib/paraglide/messages.js';
 
 export class SyncEngine {
@@ -66,18 +69,19 @@ export class SyncEngine {
             const remoteStatus = this.remoteStatus(remote, config.branch);
             if (remoteStatus) return remoteStatus;
 
-            try {
-                await this.git.pull(config.branch);
-            } catch (error) {
-                if (isConflictError(error)) {
-                    return this.result('conflict', {
-                        message: m.sync_merge_conflict_message(),
-                    });
-                }
-                throw error;
-            }
-
-            const result = await importFromFolder(db, this.syncDir, 'merge');
+            await this.git.fetchBranch(config.branch);
+            const remoteSnapshot = parseSnapshotFromFolder(
+                await this.git.snapshotFiles(`refs/remotes/origin/${config.branch}`),
+            );
+            const ancestor = await this.git.mergeBase(config.branch);
+            const baseFiles = ancestor ? await this.git.snapshotFiles(ancestor) : null;
+            const base = baseFiles?.has('metadata.json') ? parseSnapshotFromFolder(baseFiles) : null;
+            const local = validateSnapshot(await extractSnapshot(db));
+            const merged = mergeSnapshots(base, local, remoteSnapshot);
+            const result = await importSnapshot(db, merged, 'replace');
+            // The DB holds the merged local edits; Git HEAD records the remote
+            // baseline for the next three-way merge. Never merge JSON as text.
+            await this.git.hardReset(config.branch);
             return this.result('success', {
                 message: m.sync_pull_success_message({
                     boardsCreated: result.boardsCreated,
@@ -118,14 +122,16 @@ export class SyncEngine {
             const remoteStatus = this.remoteStatus(remote, config.branch);
             if (remoteStatus) return remoteStatus;
 
-            await this.git.fetch();
+            await this.git.fetchBranch(config.branch);
+            const snapshot = parseSnapshotFromFolder(
+                await this.git.snapshotFiles(`refs/remotes/origin/${config.branch}`),
+            );
+            const result = await importSnapshot(db, snapshot, 'replace');
             await this.git.hardReset(config.branch);
-
-            const result = await importFromFolder(db, this.syncDir, 'replace');
             return this.result('success', {
                 message: m.sync_force_pull_success({
-                    boards: result.boardsCreated,
-                    tickets: result.ticketsCreated,
+                    boards: result.boardsCreated + result.boardsUpdated,
+                    tickets: result.ticketsCreated + result.ticketsUpdated,
                 }),
                 successKind: 'force_pulled',
             });
@@ -188,7 +194,13 @@ export class SyncEngine {
         db: Database,
         commitPrefix: string,
     ): Promise<boolean> {
-        const files = snapshotToFolderJsonFiles(await extractSnapshot(db));
+        const files = snapshotToFolderJsonFiles(validateSnapshot(await extractSnapshot(db)));
+        for (const entry of await readDir(`${this.syncDir}/boards`)) {
+            const path = `boards/${entry.name}`;
+            if (!entry.isDirectory && entry.name.endsWith('.json') && !files.has(path)) {
+                await remove(`${this.syncDir}/${path}`);
+            }
+        }
         for (const [relativePath, content] of files.entries()) {
             await writeTextFile(`${this.syncDir}/${relativePath}`, content);
         }
@@ -211,7 +223,9 @@ export class SyncEngine {
 
         if (
             remote.defaultBranch !== null &&
-            remote.defaultBranch !== branch
+            remote.defaultBranch !== branch &&
+            !remote.branches.includes(branch) &&
+            !options.allowMissingBranch
         ) {
             return this.result('branch_mismatch', {
                 message: m.sync_branch_mismatch_message({

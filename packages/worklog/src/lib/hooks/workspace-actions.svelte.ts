@@ -84,7 +84,12 @@ export function useWorkspaceActions() {
     /** Close the current workspace and return to the workspace selector. */
     async function closeWorkspace(): Promise<void> {
         undoRedo.clear();
-        await workspace.close();
+        try {
+            await workspace.close();
+        } catch (error) {
+            notifications.add({ kind: 'error', title: m.workspace_switch_failed(), subtitle: String(error) });
+            return;
+        }
         await goto('/');
 
         notifications.add({

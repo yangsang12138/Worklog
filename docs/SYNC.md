@@ -39,7 +39,7 @@ The mapper module (`src/lib/db/mappers/`) is the core of this system:
 
 | Step | Module | Description |
 |------|--------|-------------|
-| **Extract** | `extract.ts` | Reads all tables from SQLite into a typed `WorklogSnapshot` object |
+| **Extract** | `extract.ts` | Reads active/archived boards, tickets, workspace metadata and app settings into a typed snapshot |
 | **Serialize** | `serialize-json.ts`, `serialize-csv.ts` | Converts a snapshot into file content strings |
 | **Deserialize** | `deserialize-json.ts`, `deserialize-csv.ts` | Parses file content back into a snapshot |
 | **Import** | `import.ts` | Writes a snapshot into the database with conflict resolution |
@@ -107,7 +107,7 @@ due_date, start_date, labels, comments, created_at, updated_at
 | Strategy | Behavior |
 |----------|----------|
 | **Merge** (default) | Upsert by ID. Existing items are updated, new items are inserted, items not in the import are left untouched. |
-| **Replace** | Wipes the current database and inserts everything from the import. Clean slate. |
+| **Replace** | Upserts the snapshot and deletes absent boards/tickets in one transaction. Retained tickets keep their local push history. |
 
 ### Import Sources
 
@@ -123,7 +123,7 @@ The import flow auto-detects the source type:
 
 ### Concept
 
-GitHub sync turns a private repository into a shared workspace backend. The flow is explicit — the user manually pushes and pulls, or optionally enables auto-sync on save.
+GitHub sync turns a private repository into a shared workspace backend. The flow is explicit — the user manually pushes and pulls, or optionally enables periodic auto-sync.
 
 The sync directory lives inside the workspace:
 
@@ -146,7 +146,7 @@ Sync uses a **GitHub Personal Access Token (PAT)** with `repo` scope:
 
 - No SSH keys to manage
 - No OAuth flow to implement
-- Token stored locally via `tauri-plugin-store` (encrypted per-app storage)
+- Token stored locally in the `sync_config` SQLite table; the authenticated remote URL is also stored in the sync repository’s Git configuration
 - Used for HTTPS git operations: `https://<token>@github.com/<owner>/<repo>.git`
 
 #### Creating a PAT
@@ -168,20 +168,22 @@ Sync uses a **GitHub Personal Access Token (PAT)** with `repo` scope:
 ### Pull Flow
 
 ```
-1. git fetch → git merge (fast-forward preferred)
-2. Read flat JSON files from .worklog/sync/
-3. Deserialize into snapshot
-4. Import snapshot into SQLite with 'merge' strategy
+1. Fetch the configured remote branch and read its tracked snapshot files
+2. Validate the remote snapshot before changing local data
+3. Merge common Git ancestor + current SQLite snapshot + remote snapshot by entity/field
+4. Import the result through a native SQLite transaction, including deletions
+5. Set sync HEAD to the remote baseline; merged local edits stay in SQLite until push
+6. Refresh boards, archives, workspace metadata and the current view
 ```
 
 ### Conflict Handling
 
 If both local and remote have diverged:
 
-1. The pull will attempt a fast-forward merge
-2. If conflicts exist in the JSON files, the sync engine reports a `conflict` status
-3. The user can choose to **force push** (overwrite remote) or **force pull** (overwrite local)
-4. A future iteration could add field-level merge resolution
+1. Independent changes to different fields or entities are merged automatically
+2. Conflicting edits to the same field, or editing an entity deleted on the other device, report `conflict` without importing data
+3. The user can choose **force push** (overwrite remote) or **force pull** (overwrite local), each with explicit confirmation
+4. Auto-sync pauses for conflict resolution; an empty remote is initialized by the first automatic push
 
 ### Sync Configuration
 
@@ -192,14 +194,14 @@ Stored in the `sync_config` database table:
 | `remote_url` | TEXT | GitHub repository HTTPS URL |
 | `access_token` | TEXT | GitHub PAT |
 | `branch` | TEXT | Branch to sync (default: `main`) |
-| `auto_sync` | BOOLEAN | Push automatically on save |
+| `auto_sync` | BOOLEAN | Pull then push at the configured interval |
 | `last_synced_at` | TEXT | ISO timestamp of last successful sync |
 
 ---
 
 ## Security
 
-- **Tokens are stored locally** in the Tauri app's encrypted store. They never leave the machine except when authenticating with GitHub.
+- **Tokens are stored locally** in SQLite and the authenticated Git remote URL, not an encrypted credential store. Snapshot exports exclude sync credentials.
 - **The `.worklog/sync/` directory should be gitignored** from the workspace's own git repo (if any) to avoid nesting repos.
 - **The PAT should have minimal scope** — only `Contents: Read and write` on the specific sync repository.
 - **No data is sent to any server other than the configured GitHub remote.**
@@ -209,7 +211,7 @@ Stored in the `sync_config` database table:
 ## Limitations & Future Work
 
 - **No real-time collaboration** — Sync is explicit push/pull, not live multiplayer.
-- **No branch-level merge** — V1 uses a simple overwrite/upsert model. Field-level merge is a future enhancement.
+- **Snapshot scope** — Board Markdown documents, custom ticket-type definitions, event history, HTTP push targets/records and sync credentials are not included in the Git snapshot format. This is not a complete workspace backup.
 - **Git must be installed** — The sync feature shells out to the system `git` binary. A future version could bundle `libgit2`.
 - **Single remote** — V1 supports one remote per workspace. Multi-remote is out of scope.
 
@@ -231,3 +233,20 @@ Stored in the `sync_config` database table:
 Navigate to **Settings → Data Management** for export/import controls with format selection.
 
 Navigate to **Settings → Sync** to configure GitHub remote, token, and sync preferences.
+
+## Regression checks
+
+Run from `packages/worklog`:
+
+```sh
+bun run test:sync
+bun run test:sync:engine
+bun run test:boards
+cargo test --offline --manifest-path src-tauri/Cargo.toml --lib transaction::tests
+bun run check
+bun run build
+```
+
+The engine tests run the actual serializers, GitClient and SyncEngine against temporary bare Git repositories and SQLite databases. The IPC transport is adapted for tests. Native tests separately verify rollback with the real SQLx connection pool. The HTTP authentication test binds a temporary localhost port. The Node tests require Node 22.15+ for module hooks.
+
+The optional `WORKLOG_AUDIT_REMOTE` environment variable points to a local read-only mirror of the configured sync repository for the three-board audit fixture. Without it, that one fixture is skipped. Test pushes only target temporary local repositories. After changing the native transaction command, restart/rebuild the Tauri application; a frontend hot reload alone is insufficient.

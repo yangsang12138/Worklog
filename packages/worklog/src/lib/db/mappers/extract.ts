@@ -10,7 +10,10 @@ import { EXPORT_VERSION } from './types';
 export async function extractSnapshot(db: Database): Promise<WorklogSnapshot> {
     const workspaceMeta = await WorkspaceRepo.getWorkspaceMeta(db);
     const appSettings = await SettingsRepo.getSettings(db);
-    const boards = await BoardRepo.listBoards(db);
+    const boards = [
+        ...await BoardRepo.listBoards(db),
+        ...await BoardRepo.listBoards(db, { archived: true }),
+    ];
 
     // Build per-board snapshots with their tickets
     const boardSnapshots: BoardSnapshot[] = [];

@@ -7,6 +7,8 @@ import type { SyncConfig, SyncOperation, SyncResult } from '$lib/sync/types';
 import * as m from '$lib/paraglide/messages.js';
 import { SyncOperationGate } from './sync-operation-gate';
 import { runAutomaticSync } from './sync-flow';
+import { getBoards } from '$lib/hooks/boards.svelte';
+import { getUndoRedo } from '$lib/hooks/undo-redo.svelte';
 
 let schedulerInterval: number | null = null;
 let countdownInterval: number | null = null;
@@ -19,6 +21,7 @@ export const syncState = $state({
     timeRemainingMs: 0,
     lastResult: null as SyncResult | null,
     pendingResolution: null as SyncResult | null,
+    dataVersion: 0,
 });
 
 export async function runSyncOperation(
@@ -32,8 +35,21 @@ export async function runSyncOperation(
             syncState.activeOperation = operation;
 
             try {
+                config = { ...config };
                 const db = await getDb(workspacePath);
                 const engine = new SyncEngine(workspacePath);
+                const pull = async (force = false) => {
+                    const result = force ? await engine.forcePull(db, config) : await engine.pull(db, config);
+                    if (result.status === 'success' && getWorkspace().path === workspacePath) {
+                        const boards = getBoards(() => workspacePath);
+                        await boards.load();
+                        await boards.loadArchived();
+                        await getWorkspace().refreshMeta();
+                        getUndoRedo().clear();
+                        syncState.dataVersion++;
+                    }
+                    return result;
+                };
                 if (!(await engine.isGitAvailable())) {
                     const result: SyncResult = {
                         status: 'error',
@@ -50,20 +66,26 @@ export async function runSyncOperation(
                         result = await engine.push(db, config);
                         break;
                     case 'pull':
-                        result = await engine.pull(db, config);
+                        result = await pull();
                         break;
                     case 'force_push':
                         result = await engine.forcePush(db, config);
                         break;
                     case 'force_pull':
-                        result = await engine.forcePull(db, config);
+                        result = await pull(true);
                         break;
                     case 'auto':
                         result = await runAutomaticSync(
-                            () => engine.pull(db, config),
+                            () => pull(),
                             () => engine.push(db, config),
                         );
                         break;
+                }
+                if (result.status === 'success') {
+                    await db.execute('UPDATE sync_config SET last_synced_at = ?, updated_at = ? WHERE id = 1',
+                        [result.timestamp, result.timestamp]);
+                    if (getWorkspace().path === workspacePath) getSyncConfig().updateLastSynced(result.timestamp);
+                    clearSyncResolution();
                 }
                 syncState.lastResult = result;
                 if (result.status === 'remote_has_data' || result.status === 'conflict') {
@@ -132,7 +154,7 @@ export function initSyncScheduler() {
 
         const lastSyncedAt = syncConfig.config.last_synced_at
             ? new Date(syncConfig.config.last_synced_at).getTime()
-            : Date.now();
+            : 0;
         syncState.nextSyncAt =
             lastSyncedAt + syncConfig.config.auto_sync_interval * 60 * 1000;
         syncState.timeRemainingMs = Math.max(
@@ -147,7 +169,7 @@ export function initSyncScheduler() {
             !syncConfig.config.auto_sync ||
             !syncConfig.config.remote_url ||
             !syncConfig.config.access_token ||
-            syncState.isSyncing
+            syncState.isSyncing || syncState.pendingResolution
         ) {
             return;
         }
@@ -165,9 +187,6 @@ export function initSyncScheduler() {
         );
 
         if (result.status === 'success') {
-            syncConfig.updateLastSynced(result.timestamp);
-            const db = await getDb(workspace.path);
-            await syncConfig.save(db);
             return;
         }
 

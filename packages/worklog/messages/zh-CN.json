@@ -661,5 +661,8 @@
   "workspace_closed": "已关闭工作区",
   "workspace_switch_failed": "切换工作区失败",
   "workspace_folder_missing": "该工作区文件夹已不存在，可能被移动、重命名或删除。",
-  "settings_workspace_actions": "工作区操作"
+  "settings_workspace_actions": "工作区操作",
+  "sync_force_pull_confirm_title": "覆盖本地同步数据",
+  "sync_force_pull_confirm_action": "确认拉取远端",
+  "sync_force_pull_confirm_message": "这会用远端快照替换本地看板和工单，未推送的本地修改会丢失。确定继续吗？"
 }

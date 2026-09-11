@@ -18,6 +18,7 @@
     import {
         initSyncScheduler,
         destroySyncScheduler,
+        syncState,
     } from "$lib/sync/sync-scheduler.svelte";
     import { onDestroy } from "svelte";
     import * as m from "$lib/paraglide/messages.js";
@@ -148,7 +149,9 @@
             </aside>
         {/if}
 
-        {@render children()}
+        {#key syncState.dataVersion}
+            {@render children()}
+        {/key}
     {:else}
         <main class="workspace-state">
             <article aria-busy="true">{m.workspace_opening()}</article>

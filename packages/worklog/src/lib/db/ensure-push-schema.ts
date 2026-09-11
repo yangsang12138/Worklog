@@ -1,4 +1,5 @@
 import type Database from '@tauri-apps/plugin-sql';
+import { executeTransaction } from './transaction';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Self-healing schema guard for the remote-push tables.
@@ -108,9 +109,42 @@ const PUSH_TARGET_COLUMNS: Array<[string, string]> = [
     ['updated_at', `TEXT NOT NULL DEFAULT ''`],
 ];
 
+async function repairPushRecordForeignKey(db: Database): Promise<void> {
+    const foreignKeys = await db.select<Array<{ from: string; table: string }>>(
+        `PRAGMA foreign_key_list(push_records)`,
+    );
+    const legacyTables = ['tickets_legacy', 'tickets_v4', 'tickets_v7', 'tickets_v11'];
+    if (!foreignKeys.some((fk) => fk.from === 'ticket_id' && legacyTables.includes(fk.table))) {
+        return;
+    }
+
+    // Earlier migrations renamed tickets after CREATE_TABLES had already created
+    // push_records. SQLite rewrote its FK to the temporary table, then that table
+    // was dropped. Rebuild the child table without renaming the original parent.
+    const columns = await db.select<Array<{ name: string }>>(`PRAGMA table_info(push_records)`);
+    const columnList = columns.map(({ name }) => `"${name.replaceAll('"', '""')}"`).join(', ');
+    const objects = await db.select<Array<{ sql: string }>>(
+        `SELECT sql FROM sqlite_master
+         WHERE tbl_name = 'push_records' AND type IN ('index', 'trigger') AND sql IS NOT NULL`,
+    );
+    const createTable = CREATE_PUSH_RECORDS.replace('IF NOT EXISTS push_records', 'push_records_repaired');
+
+    // Copy every existing column, including request/response history. The
+    // native transaction owns the connection through commit or rollback.
+    await executeTransaction(db, `
+            ${createTable};
+            INSERT INTO push_records_repaired (${columnList})
+                SELECT ${columnList} FROM push_records;
+            DROP TABLE push_records;
+            ALTER TABLE push_records_repaired RENAME TO push_records;
+            ${objects.map(({ sql }) => `${sql};`).join('\n')}
+        `);
+}
+
 /**
  * Reconcile the remote-push tables with the schema this build expects.
- * Safe to call on every connection; never throws for a recoverable problem.
+ * Safe to call on every connection. Foreign-key repair failures propagate so
+ * the workspace does not silently continue with broken deletes.
  */
 export async function ensurePushSchema(db: Database): Promise<void> {
     // ── tickets.push_info (mirrored push badges on the card) ────────────────
@@ -165,6 +199,8 @@ export async function ensurePushSchema(db: Database): Promise<void> {
             }
         }
     }
+
+    await repairPushRecordForeignKey(db);
 
     // ── indexes ─────────────────────────────────────────────────────────────
     const indexes = [

@@ -37,6 +37,7 @@
     // Confirm delete
     let deleteBoardId = $state<string | null>(null);
     let deleteModalOpen = $state(false);
+    let deleteError = $state<string | null>(null);
 
     // Per-board action loading state
     let unarchivingId = $state<string | null>(null);
@@ -80,21 +81,22 @@
 
     function promptDelete(id: string) {
         deleteBoardId = id;
+        deleteError = null;
         deleteModalOpen = true;
     }
 
     async function confirmDelete() {
-        if (!deleteBoardId) return;
+        if (!deleteBoardId || deletingId) return;
         deletingId = deleteBoardId;
-        actionError = null;
+        deleteError = null;
         try {
             await boardsApi.remove(deleteBoardId);
-        } catch (e) {
-            actionError = String(e);
-        } finally {
-            deletingId = null;
             deleteModalOpen = false;
             deleteBoardId = null;
+        } catch (e) {
+            deleteError = String(e);
+        } finally {
+            deletingId = null;
         }
     }
 
@@ -214,12 +216,17 @@
     primaryButtonText={deletingId ? m.modal_archived_boards_deleting() : m.modal_archived_boards_delete_perm()}
     secondaryButtonText={m.modal_cancel()}
     primaryButtonDisabled={!!deletingId}
-    on:click:button--secondary={() => (deleteModalOpen = false)}
+    preventCloseOnClickOutside={!!deletingId}
+    on:close={(event) => { if (deletingId) event.preventDefault(); }}
+    on:click:button--secondary={() => { if (!deletingId) deleteModalOpen = false; }}
     on:click:button--primary={confirmDelete}
 >
     <p>
         {m.modal_archived_boards_delete_desc()}
     </p>
+    {#if deleteError}
+        <p class="archive-error" role="alert">{deleteError}</p>
+    {/if}
 </Modal>
 
 <style>

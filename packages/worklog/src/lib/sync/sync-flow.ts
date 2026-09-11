@@ -5,5 +5,5 @@ export async function runAutomaticSync(
     push: () => Promise<SyncResult>,
 ): Promise<SyncResult> {
     const pulled = await pull();
-    return pulled.status === 'success' ? push() : pulled;
+    return pulled.status === 'success' || pulled.status === 'remote_empty' ? push() : pulled;
 }

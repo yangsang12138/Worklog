@@ -211,6 +211,8 @@
 
     let deleteBoardId = $state<string | null>(null);
     let deleteModalOpen = $state(false);
+    let deletingBoard = $state(false);
+    let deleteError = $state<string | null>(null);
 
     let editBoardId = $state<string | null>(null);
     let editModalOpen = $state(false);
@@ -283,18 +285,22 @@
 
     function promptDeleteBoard(id: string) {
         deleteBoardId = id;
+        deleteError = null;
         deleteModalOpen = true;
     }
 
     async function confirmDeleteBoard() {
-        if (!deleteBoardId) return;
+        if (!deleteBoardId || deletingBoard) return;
+        deletingBoard = true;
+        deleteError = null;
         try {
             await boardsApi.remove(deleteBoardId);
-        } catch (error) {
-            console.error("Failed to delete board:", error);
-        } finally {
             deleteModalOpen = false;
             deleteBoardId = null;
+        } catch (error) {
+            deleteError = String(error);
+        } finally {
+            deletingBoard = false;
         }
     }
 
@@ -578,14 +584,20 @@
     size="xs"
     bind:open={deleteModalOpen}
     modalHeading={m.modal_delete_board_title()}
-    primaryButtonText={m.delete_ticket_btn()}
+    primaryButtonText={deletingBoard ? m.modal_archived_boards_deleting() : m.delete_ticket_btn()}
+    primaryButtonDisabled={deletingBoard}
     secondaryButtonText={m.modal_cancel()}
-    on:click:button--secondary={() => (deleteModalOpen = false)}
+    preventCloseOnClickOutside={deletingBoard}
+    on:close={(event) => { if (deletingBoard) event.preventDefault(); }}
+    on:click:button--secondary={() => { if (!deletingBoard) deleteModalOpen = false; }}
     on:click:button--primary={confirmDeleteBoard}
 >
     <p>
         {m.modal_delete_board_msg()}
     </p>
+    {#if deleteError}
+        <p class="workspace-modal-error" role="alert">{deleteError}</p>
+    {/if}
 </Modal>
 
 <ComposedModal danger bind:open={showCreateDiscard} size="sm">
