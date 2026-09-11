@@ -20,6 +20,7 @@
     import { syncState } from "$lib/sync/sync-scheduler.svelte";
     import { useAppAppearance } from "$lib/hooks/app-appearance.svelte";
     import { getUndoRedo } from "$lib/hooks/undo-redo.svelte";
+    import WorkspaceSwitcher from "$lib/components/app/layout/workspace/workspace-switcher.svelte";
     import * as m from "$lib/paraglide/messages.js";
 
     interface AppToolbarProps {
@@ -91,6 +92,9 @@
         width="100px"
         alt=""
     />
+
+    <!-- Workspace identity + switcher (renders only when a workspace is open) -->
+    <WorkspaceSwitcher />
 
     {#if formattedSyncTime}
         <div class="sync-status">

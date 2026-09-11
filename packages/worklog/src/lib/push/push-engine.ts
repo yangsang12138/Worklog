@@ -1,4 +1,5 @@
 import type Database from '@tauri-apps/plugin-sql';
+import { fetch as httpFetch } from '@tauri-apps/plugin-http';
 import type { Ticket } from '$lib/components/app/types';
 import type {
     PushTarget,
@@ -22,6 +23,69 @@ import {
     parseBindings,
     parseVariables,
 } from './field-catalog';
+import {
+    evaluateSuccess,
+    parseSuccessCheck,
+    readMessageAt,
+    summarizeSuccessCheck,
+} from './success-check';
+
+/**
+ * Message keys that ticket/flow systems commonly use for their business result.
+ */
+const RESPONSE_MESSAGE_KEYS = [
+    'msg',
+    'message',
+    'detailMsg',
+    'errmsg',
+    'errorMessage',
+    'error',
+];
+
+function truncateMessage(text: string, max = 200): string {
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * Best-effort extraction of the target system's own words from a response body.
+ *
+ * A target can answer 200 at the HTTP layer while rejecting the submission in
+ * the body — gateway envelopes such as
+ * `{"__sys__":{"status":-1,"msg":"工单提交失败，请联系管理员！"}}` are the norm.
+ * The HTTP status alone therefore hides the real outcome, so the response body
+ * has to travel with the result. Looks at the top level and one level down
+ * (which covers `{msg}` and `{__sys__:{msg}}`), and never throws.
+ */
+export function extractResponseMessage(body: string | null | undefined): string | null {
+    if (!body) return null;
+    const text = body.trim();
+    if (!text) return null;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        // Not JSON (plain text, HTML error page): the body itself is the message.
+        return truncateMessage(text);
+    }
+
+    const candidates: unknown[] = [parsed];
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        candidates.push(...Object.values(parsed as Record<string, unknown>));
+    }
+
+    for (const candidate of candidates) {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+        for (const key of RESPONSE_MESSAGE_KEYS) {
+            const value = (candidate as Record<string, unknown>)[key];
+            if (typeof value === 'string' && value.trim() !== '') {
+                return truncateMessage(value.trim());
+            }
+        }
+    }
+
+    return null;
+}
 
 /**
  * PushEngine — core engine for remote push functionality.
@@ -356,7 +420,31 @@ export class PushEngine {
             );
 
             const durationMs = Math.round(performance.now() - startTime);
-            const isSuccess = status !== null && status >= 200 && status < 300;
+
+            // The HTTP status alone lies for systems that answer 200 with a
+            // business rejection in the body, so the target may declare where the
+            // real verdict lives (push_targets.success_check).
+            const check = parseSuccessCheck(target.success_check);
+            const verdict = evaluateSuccess(check, status, body);
+            const isSuccess = verdict.ok;
+            const httpLayerFailed =
+                status === null || status < 200 || status >= 300;
+
+            // An explicitly configured message path wins over the heuristic.
+            const targetMessage =
+                readMessageAt(body, check.message_path) ??
+                extractResponseMessage(body);
+
+            let failureMessage: string | null = null;
+            if (!isSuccess) {
+                const parts = [
+                    httpLayerFailed
+                        ? (error ?? verdict.reason)
+                        : `业务校验未通过：${verdict.reason}`,
+                ];
+                if (targetMessage) parts.push(`目标系统：${targetMessage}`);
+                failureMessage = parts.join('；');
+            }
 
             const record = await PushRecordRepo.create(this.db, {
                 ticket_id: ticket.id,
@@ -367,7 +455,7 @@ export class PushEngine {
                 variables_snapshot: JSON.stringify(variableValues),
                 response_status: status,
                 response_body: body,
-                error_message: error ?? null,
+                error_message: failureMessage,
                 duration_ms: durationMs,
             });
 
@@ -384,11 +472,11 @@ export class PushEngine {
                 await PushRecordRepo.updateStatus(this.db, record.id, 'failed', {
                     response_status: status,
                     response_body: body,
-                    error_message: error ?? `HTTP ${status}`,
+                    error_message: failureMessage,
                     duration_ms: durationMs,
                 });
                 record.status = 'failed';
-                record.error_message = error ?? `HTTP ${status}`;
+                record.error_message = failureMessage;
             }
 
             await this.updateTicketPushInfo(ticket.id, {
@@ -404,12 +492,18 @@ export class PushEngine {
                 [new Date().toISOString(), target.id],
             );
 
+            const statusLabel = status === null ? '未收到响应' : `HTTP ${status}`;
+
             return {
                 success: isSuccess,
                 record: record as PushRecord,
                 message: isSuccess
-                    ? `Push successful (HTTP ${status})`
-                    : `Push failed: ${error ?? `HTTP ${status}`}`,
+                    ? `推送成功（${statusLabel}${
+                          verdict.evidence
+                              ? ` · 判定：${verdict.evidence}`
+                              : ` · ${summarizeSuccessCheck(check)}`
+                      }）${targetMessage ? ` · 目标系统：${targetMessage}` : ''}`
+                    : `推送失败：${failureMessage}`,
             };
         } catch (err) {
             const durationMs = Math.round(performance.now() - startTime);
@@ -555,7 +649,11 @@ export class PushEngine {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-            const response = await fetch(url, {
+            // Issued from Rust, not from the webview: a JSON POST is not a CORS
+            // "simple request", so the webview first sends an OPTIONS preflight
+            // that most internal gateways answer with 403. The push then dies as
+            // an opaque "Load failed" before the server ever sees the payload.
+            const response = await httpFetch(url, {
                 method,
                 headers,
                 body: body ?? undefined,

@@ -25,6 +25,15 @@
         applyImport,
     } from "$lib/push/push-config-io";
     import { getDb } from "$lib/db";
+    import {
+        DEFAULT_SUCCESS_CHECK,
+        evaluateSuccess,
+        parseSuccessCheck,
+        serializeSuccessCheck,
+        summarizeSuccessCheck,
+        type PushSuccessCheck,
+        type PushSuccessOp,
+    } from "$lib/push/success-check";
     import { notifications } from "$lib/hooks/notifications.svelte";
     import type {
         PushTarget,
@@ -49,7 +58,8 @@
         | "headers"
         | "params"
         | "payload"
-        | "variables";
+        | "variables"
+        | "success";
 
     // Kept out of the template: Svelte would read `{{...}}` as an expression.
     const URL_VAR_HINT = '{{变量Key}}';
@@ -75,6 +85,10 @@
     let formQueryParams = $state<FieldBinding[]>([]);
     let formVariables = $state<PushVariableDef[]>([]);
     let formSourceConfig = $state<PushSourceConfig>(defaultSourceConfig());
+    /** How the target's response decides success — '' equivalent when mode is "http". */
+    let formSuccessCheck = $state<PushSuccessCheck>({ ...DEFAULT_SUCCESS_CHECK });
+    /** Scratch response body for the "试一下" box on the 成功判定 tab. */
+    let sampleResponse = $state("");
 
     /**
      * Variable keys observed at the last sync. Used to tell a genuinely new
@@ -96,6 +110,8 @@
         formQueryParams = [];
         formVariables = [];
         formSourceConfig = defaultSourceConfig();
+        formSuccessCheck = { ...DEFAULT_SUCCESS_CHECK };
+        sampleResponse = "";
         knownVarKeys = [];
         editingTargetId = null;
         editorTab = "basic";
@@ -125,6 +141,8 @@
             formVariables,
         );
         knownVarKeys = formVariables.map((v) => v.key).filter(Boolean);
+        formSuccessCheck = parseSuccessCheck(target.success_check);
+        sampleResponse = "";
         editingTargetId = target.id;
         editorTab = "basic";
         showModal = true;
@@ -157,6 +175,7 @@
                 query_params: serializeBindings(formQueryParams),
                 variables: JSON.stringify(formVariables),
                 source_config: serializeSourceConfig(formSourceConfig),
+                success_check: serializeSuccessCheck(formSuccessCheck),
                 timeout_ms: formTimeout,
                 retry_count: formRetryCount,
                 enabled: formEnabled ? 1 : 0,
@@ -199,6 +218,11 @@
             return {
                 tab: "params",
                 message: "请填写「请求地址 (Endpoint URL)」。",
+            };
+        if (formSuccessCheck.mode === "json" && !formSuccessCheck.path.trim())
+            return {
+                tab: "success",
+                message: "成功判定选了「响应 JSON 字段」，请填写字段路径（如 __sys__.status）。",
             };
         return null;
     }
@@ -336,6 +360,30 @@
         return out;
     });
 
+    /**
+     * Live verdict for the scratch response on the 成功判定 tab: a rule can be
+     * proven there before it is saved (and before a real push is risked).
+     * Assumes HTTP 200 — the interesting case is a body that says "rejected".
+     */
+    const sampleVerdict = $derived(
+        sampleResponse.trim() === ""
+            ? null
+            : evaluateSuccess(formSuccessCheck, 200, sampleResponse),
+    );
+
+    function patchSuccessCheck(patch: Partial<PushSuccessCheck>) {
+        formSuccessCheck = { ...formSuccessCheck, ...patch };
+    }
+
+    const OP_OPTIONS: { value: PushSuccessOp; label: string }[] = [
+        { value: "eq", label: "等于" },
+        { value: "ne", label: "不等于" },
+        { value: "in", label: "属于（逗号分隔）" },
+        { value: "exists", label: "存在即可" },
+        { value: "truthy", label: "为真（非 0/非空）" },
+        { value: "regex", label: "匹配正则" },
+    ];
+
     const TAB_ITEMS: { id: EditorTab; label: string }[] = [
         { id: "basic", label: "基本信息" },
         { id: "sources", label: "字段来源" },
@@ -343,6 +391,7 @@
         { id: "params", label: "URL 与参数" },
         { id: "payload", label: "请求体字段" },
         { id: "variables", label: "推送变量" },
+        { id: "success", label: "成功判定" },
     ];
 
     function tabBadge(id: EditorTab): number | null {
@@ -476,6 +525,15 @@
                             </span>
                             <span class="meta-item">
                                 超时: {target.timeout_ms}ms
+                            </span>
+                            <span
+                                class="meta-item"
+                                class:meta-item--rule={!!target.success_check}
+                                title="推送成功/失败的判定标准"
+                            >
+                                判定: {summarizeSuccessCheck(
+                                    parseSuccessCheck(target.success_check),
+                                )}
                             </span>
                         </div>
 
@@ -691,6 +749,183 @@
                         bind:variables={formVariables}
                         usedKeys={usedVariableKeys}
                     />
+                {:else if editorTab === "success"}
+                    <div class="success-tab">
+                        <p class="form-note">
+                            目标系统经常在 HTTP 200 的响应体里拒绝提交（例如
+                            <code>__sys__.status = -1</code>）。不配规则时任何 2xx
+                            都会记为成功、工单卡片徽标变绿，但远端可能什么都没建。
+                        </p>
+
+                        <label class="field">
+                            <span class="field-label">判定方式</span>
+                            <select
+                                class="field-input"
+                                value={formSuccessCheck.mode}
+                                onchange={(e) =>
+                                    patchSuccessCheck({
+                                        mode: e.currentTarget
+                                            .value as PushSuccessCheck["mode"],
+                                    })}
+                            >
+                                <option value="http">
+                                    HTTP 状态码（2xx 即视为受理成功）
+                                </option>
+                                <option value="json">
+                                    响应 JSON 字段（推荐）
+                                </option>
+                            </select>
+                        </label>
+
+                        {#if formSuccessCheck.mode === "json"}
+                            <div class="form-row form-row--3">
+                                <label class="field">
+                                    <span class="field-label">字段路径 *</span>
+                                    <input
+                                        class="field-input mono"
+                                        type="text"
+                                        placeholder="__sys__.status"
+                                        value={formSuccessCheck.path}
+                                        oninput={(e) =>
+                                            patchSuccessCheck({
+                                                path: e.currentTarget.value,
+                                            })}
+                                    />
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">比较方式</span>
+                                    <select
+                                        class="field-input"
+                                        value={formSuccessCheck.op}
+                                        onchange={(e) =>
+                                            patchSuccessCheck({
+                                                op: e.currentTarget
+                                                    .value as PushSuccessOp,
+                                            })}
+                                    >
+                                        {#each OP_OPTIONS as o}
+                                            <option value={o.value}>
+                                                {o.label}
+                                            </option>
+                                        {/each}
+                                    </select>
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">期望值</span>
+                                    <input
+                                        class="field-input mono"
+                                        type="text"
+                                        placeholder="0"
+                                        value={formSuccessCheck.value}
+                                        oninput={(e) =>
+                                            patchSuccessCheck({
+                                                value: e.currentTarget.value,
+                                            })}
+                                    />
+                                </label>
+                            </div>
+
+                            <div class="form-row form-row--3">
+                                <label class="field">
+                                    <span class="field-label">
+                                        消息字段（可选）
+                                    </span>
+                                    <input
+                                        class="field-input mono"
+                                        type="text"
+                                        placeholder="__sys__.msg"
+                                        value={formSuccessCheck.message_path}
+                                        oninput={(e) =>
+                                            patchSuccessCheck({
+                                                message_path:
+                                                    e.currentTarget.value,
+                                            })}
+                                    />
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">
+                                        响应中无此路径时
+                                    </span>
+                                    <select
+                                        class="field-input"
+                                        value={formSuccessCheck.when_missing}
+                                        onchange={(e) =>
+                                            patchSuccessCheck({
+                                                when_missing: e.currentTarget
+                                                    .value as PushSuccessCheck["when_missing"],
+                                            })}
+                                    >
+                                        <option value="fail">
+                                            判为失败（推荐）
+                                        </option>
+                                        <option value="http">
+                                            按 HTTP 状态码判定
+                                        </option>
+                                    </select>
+                                </label>
+                                <label class="field">
+                                    <span class="field-label">
+                                        响应不是 JSON 时
+                                    </span>
+                                    <select
+                                        class="field-input"
+                                        value={formSuccessCheck.when_not_json}
+                                        onchange={(e) =>
+                                            patchSuccessCheck({
+                                                when_not_json:
+                                                    e.currentTarget
+                                                        .value as PushSuccessCheck["when_not_json"],
+                                            })}
+                                    >
+                                        <option value="fail">
+                                            判为失败（推荐）
+                                        </option>
+                                        <option value="http">
+                                            按 HTTP 状态码判定
+                                        </option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <p class="form-note">
+                                当前规则：<code
+                                    >{summarizeSuccessCheck(
+                                        formSuccessCheck,
+                                    )}</code
+                                >
+                            </p>
+
+                            <!-- Prove the rule before saving it -->
+                            <div class="rule-test">
+                                <span class="field-label">
+                                    试一下（粘贴一段响应体，按 HTTP 200 判定）
+                                </span>
+                                <textarea
+                                    class="field-input mono"
+                                    rows="4"
+                                    placeholder={'{"__sys__":{"status":0,"msg":"提交成功"}}'}
+                                    bind:value={sampleResponse}
+                                ></textarea>
+                                {#if sampleVerdict}
+                                    <p
+                                        class="rule-test-result"
+                                        class:ok={sampleVerdict.ok}
+                                        class:bad={!sampleVerdict.ok}
+                                    >
+                                        {sampleVerdict.ok
+                                            ? "判定：成功"
+                                            : "判定：失败"}
+                                        · {sampleVerdict.reason}
+                                    </p>
+                                {/if}
+                            </div>
+                        {:else}
+                            <p class="form-note">
+                                当前规则：HTTP 2xx 即视为受理成功（不校验响应体）。
+                                远端在响应体里拒绝提交时，这里会看不出问题。
+                            </p>
+                        {/if}
+                    </div>
                 {/if}
             </div>
         </div>
@@ -859,6 +1094,13 @@
         background: var(--cds-ui-02);
         padding: 0.0625rem 0.375rem;
         border-radius: 2px;
+    }
+
+    /* A configured success rule is the thing that stops 200-but-rejected pushes
+       from being reported as successes, so it gets to stand out. */
+    .meta-item--rule {
+        color: var(--cds-link-01, #78a9ff);
+        font-family: var(--cds-code-01-font-family);
     }
 
     .target-actions {
@@ -1157,5 +1399,51 @@
         margin: 0;
         font-size: 0.75rem;
         color: var(--cds-text-03);
+    }
+
+    /* ── 成功判定 tab ─────────────────────────────────────────────────────── */
+    .success-tab {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .success-tab code {
+        font-family: var(--cds-code-01-font-family);
+        background: var(--cds-ui-02);
+        padding: 0.0625rem 0.25rem;
+        border-radius: 2px;
+        color: var(--cds-text-02);
+    }
+
+    .rule-test {
+        display: flex;
+        flex-direction: column;
+        gap: 0.375rem;
+        padding: 0.75rem;
+        background: var(--cds-ui-02);
+        border-radius: 4px;
+    }
+
+    .rule-test textarea {
+        height: auto;
+        padding: 0.5rem 0.625rem;
+        line-height: 1.45;
+        resize: vertical;
+    }
+
+    .rule-test-result {
+        margin: 0;
+        font-size: 0.8125rem;
+        word-break: break-word;
+        color: var(--cds-text-02);
+    }
+
+    .rule-test-result.ok {
+        color: var(--cds-support-02, #24a148);
+    }
+
+    .rule-test-result.bad {
+        color: var(--cds-support-01, #fa4d56);
     }
 </style>

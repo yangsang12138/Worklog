@@ -16,6 +16,3 @@ venv/
 
 .svelte-kit
 build
-
-# Local debug configuration (not tracked)
-.vscode/launch.json

@@ -28,6 +28,7 @@
 	import AppToolbar from "$lib/components/app/layout/toolbar/app-toolbar.svelte";
 	import CommandPalette from "$lib/components/app/layout/command-palette/command-palette.svelte";
 	import { getWorkspace } from "$lib/hooks/workspace.svelte";
+	import { useWorkspaceActions } from "$lib/hooks/workspace-actions.svelte";
 	import { getCommandPalette } from "$lib/hooks/command-palette.svelte";
 	import { getAppZoom } from "$lib/hooks/app-zoom.svelte";
 	import { getUndoRedo } from "$lib/hooks/undo-redo.svelte";
@@ -47,6 +48,7 @@
 	const workspace = getWorkspace();
 	const palette = getCommandPalette();
 	const appZoom = getAppZoom();
+	const workspaceActions = useWorkspaceActions();
 	let hasInitializedWorkspace = $state(false);
 
 	// Reactive locale anchor — creates a Svelte dependency so the whole tree
@@ -82,12 +84,14 @@
 	}
 
 	function closeWorkspace() {
-		void workspace.close();
-		void goto("/");
+		void workspaceActions.closeWorkspace();
 	}
 
 	function openWorkspaceFolder() {
-		void workspace.pick();
+		// "Open workspace" always means switching to another folder once a
+		// workspace is active, so the flow resets per-workspace UI state and
+		// lands on the new workspace instead of leaving the old board route.
+		void workspaceActions.switchWorkspace();
 	}
 
 	async function exportData() {

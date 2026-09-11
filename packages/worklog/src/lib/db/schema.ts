@@ -105,6 +105,7 @@ export const CREATE_TABLES = `
     query_params        TEXT NOT NULL DEFAULT '[]',
     variables           TEXT NOT NULL DEFAULT '[]',
     source_config       TEXT NOT NULL DEFAULT '',
+    success_check       TEXT NOT NULL DEFAULT '',
     timeout_ms          INTEGER NOT NULL DEFAULT 30000,
     retry_count         INTEGER NOT NULL DEFAULT 0,
     enabled             INTEGER NOT NULL DEFAULT 1,

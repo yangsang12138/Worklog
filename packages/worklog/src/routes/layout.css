@@ -86,10 +86,20 @@ html.preview-open .sheet-body::-webkit-scrollbar {
   width: 5px;
 }
 
+/* ── Header dropdown layering ──────────────────────────────────────────────
+   The workspace switcher dropdown opens below the 3rem header band, where the
+   side nav would cover it: Carbon gives both the same z-index (8000) and the
+   side nav wins by DOM order. Lift the header only while that menu is open, so
+   the default relationship (which lets modals rendered inside the side nav dim
+   the header) is left untouched.
+   ──────────────────────────────────────────────────────────────────────── */
+html.ws-menu-open .bx--header {
+  z-index: 8100;
+}
+
 /* ── Carbon Button Overrides ───────────────────────────────────────────────
    Make Carbon buttons match the custom comment button styling
-   ──────────────────────────────────────────────────────────────────────── */
-.bx--btn {
+   ──────────────────────────────────────────────────────────────────────── */.bx--btn {
   border-radius: 4px !important;
   gap: 0.375rem !important;
   font-weight: 500 !important;

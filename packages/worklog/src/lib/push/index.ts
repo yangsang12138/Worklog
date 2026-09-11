@@ -70,6 +70,22 @@ export {
     type PushImportSummary,
 } from './push-config-io';
 
+// Success criterion (JSON path + expected value)
+export {
+    DEFAULT_SUCCESS_CHECK,
+    parseSuccessCheck,
+    serializeSuccessCheck,
+    hasSuccessCheck,
+    summarizeSuccessCheck,
+    getByPath,
+    evaluateSuccess,
+    readMessageAt,
+    type PushSuccessCheck,
+    type PushSuccessMode,
+    type PushSuccessOp,
+    type SuccessEvaluation,
+} from './success-check';
+
 // Engine + hook
-export { PushEngine } from './push-engine';
+export { PushEngine, extractResponseMessage } from './push-engine';
 export { getPushHook } from './push-hook.svelte';

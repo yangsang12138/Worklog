@@ -1,0 +1,40 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Worklog：启动应用 (tauri dev)",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "tauri", "dev"],
+      "cwd": "${workspaceFolder}/packages/worklog",
+      "env": {
+        "NO_STRIP": "1"
+      },
+      "console": "integratedTerminal",
+      "autoAttachChildProcesses": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Worklog：Rust 断点调试（需安装 CodeLLDB）",
+      "cargo": {
+        "args": [
+          "build",
+          "--manifest-path",
+          "${workspaceFolder}/packages/worklog/src-tauri/Cargo.toml"
+        ],
+        "filter": {
+          "name": "worklog",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/packages/worklog/src-tauri",
+      "env": {
+        "NO_STRIP": "1"
+      }
+    }
+  ]
+}

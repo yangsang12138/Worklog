@@ -23,6 +23,14 @@
     "store:allow-save",
     "dialog:allow-open",
     "dialog:allow-save",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://devops.baocloud.cn"
+        }
+      ]
+    },
     "fs:default",
     "fs:write-all",
     {

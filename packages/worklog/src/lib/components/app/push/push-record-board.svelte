@@ -2,7 +2,7 @@
     import { InlineLoading, Tag, Button } from "carbon-components-svelte";
     import { Renew, SendAlt, Warning, Checkmark } from "carbon-icons-svelte";
     import { getWorkspace } from "$lib/hooks/workspace.svelte";
-    import { getPushHook } from "$lib/push/push-hook.svelte";
+    import { getPushHook, extractResponseMessage } from "$lib/push";
     import { getDb, TicketRepo } from "$lib/db";
 
     interface Props {
@@ -72,6 +72,24 @@
             hour: "2-digit",
             minute: "2-digit",
         });
+    }
+
+    // ── Row details (request / response payloads) ───────────────────────────
+
+    let expandedId = $state<string | null>(null);
+
+    function toggleDetails(id: string) {
+        expandedId = expandedId === id ? null : id;
+    }
+
+    /** Pretty-print JSON bodies; leave anything that is not JSON untouched. */
+    function formatBody(text: string | null | undefined): string {
+        if (!text) return "";
+        try {
+            return JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+            return text;
+        }
     }
 </script>
 
@@ -151,6 +169,18 @@
                                 {/if}
                             </td>
                             <td class="action-cell">
+                                <Button
+                                    kind="ghost"
+                                    size="small"
+                                    onclick={() => toggleDetails(record.id)}
+                                    iconDescription={
+                                        expandedId === record.id
+                                            ? "收起返回内容"
+                                            : "查看目标系统返回"
+                                    }
+                                >
+                                    {expandedId === record.id ? "收起" : "返回内容"}
+                                </Button>
                                 {#if record.error_message}
                                     <span class="error-tip" title={record.error_message}>
                                         <Warning size={14} />
@@ -169,6 +199,61 @@
                                 {/if}
                             </td>
                         </tr>
+                        {#if expandedId === record.id}
+                            <tr class="detail-row">
+                                <td colspan="6">
+                                    <div class="detail-grid">
+                                        <div class="detail-item detail-item--wide">
+                                            <span class="detail-label">请求地址</span>
+                                            <code class="detail-url"
+                                                >{record.request_url}</code
+                                            >
+                                        </div>
+
+                                        {#if record.error_message}
+                                            <div class="detail-item detail-item--wide">
+                                                <span class="detail-label">错误信息</span>
+                                                <span class="detail-error"
+                                                    >{record.error_message}</span
+                                                >
+                                            </div>
+                                        {/if}
+
+                                        <div class="detail-item detail-item--wide">
+                                            <span class="detail-label">
+                                                目标系统返回{record.response_status !== null &&
+                                                record.response_status !== undefined
+                                                    ? `（HTTP ${record.response_status}）`
+                                                    : ""}
+                                            </span>
+                                            {#if record.response_body}
+                                                {#if extractResponseMessage(record.response_body)}
+                                                    <span class="detail-verdict">
+                                                        {extractResponseMessage(record.response_body)}
+                                                    </span>
+                                                {/if}
+                                                <pre class="detail-pre">{formatBody(
+                                                        record.response_body,
+                                                    )}</pre>
+                                            {:else}
+                                                <span class="no-value">无响应体</span>
+                                            {/if}
+                                        </div>
+
+                                        {#if record.request_body}
+                                            <details class="detail-item detail-item--wide">
+                                                <summary class="detail-label">
+                                                    实际发送的请求体
+                                                </summary>
+                                                <pre class="detail-pre">{formatBody(
+                                                        record.request_body,
+                                                    )}</pre>
+                                            </details>
+                                        {/if}
+                                    </div>
+                                </td>
+                            </tr>
+                        {/if}
                     {/each}
                 </tbody>
             </table>
@@ -330,5 +415,74 @@
         color: var(--cds-support-01);
         display: inline-flex;
         align-items: center;
+    }
+
+    /* ── Expanded row: what was sent and what came back ───────────────────── */
+    .detail-row td {
+        padding: 0;
+        background: var(--cds-ui-02);
+    }
+
+    .detail-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 0.625rem;
+        padding: 0.75rem;
+    }
+
+    .detail-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        min-width: 0;
+    }
+
+    .detail-label {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--cds-text-03);
+    }
+
+    .detail-url {
+        font-family: var(--cds-code-01-font-family);
+        font-size: 0.75rem;
+        color: var(--cds-text-02);
+        word-break: break-all;
+    }
+
+    .detail-error {
+        font-size: 0.8125rem;
+        color: var(--cds-support-01, #fa4d56);
+        word-break: break-word;
+    }
+
+    .detail-verdict {
+        font-size: 0.8125rem;
+        color: var(--cds-text-01);
+        word-break: break-word;
+    }
+
+    .detail-pre {
+        margin: 0;
+        padding: 0.5rem;
+        max-height: 16rem;
+        overflow: auto;
+        background: var(--cds-field-01, #f4f4f4);
+        border-radius: 4px;
+        font-family: var(--cds-code-01-font-family);
+        font-size: 0.75rem;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-all;
+        color: var(--cds-text-01);
+    }
+
+    .detail-item summary.detail-label {
+        cursor: pointer;
+        text-transform: none;
+        font-size: 0.75rem;
+        color: var(--cds-link-01, #78a9ff);
     }
 </style>

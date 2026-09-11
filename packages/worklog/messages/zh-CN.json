@@ -649,5 +649,17 @@
   "push_field_app_workspace_name": "工作区名称",
   "push_field_app_author_name": "当前用户",
   "push_field_app_version": "Worklog 版本",
-  "push_field_app_pushed_at": "推送时间"
+  "push_field_app_pushed_at": "推送时间",
+  "workspace_switcher_aria_label": "工作区菜单",
+  "workspace_switch": "切换工作区",
+  "workspace_switch_subtitle": "选择其他文件夹作为当前工作区",
+  "workspace_current": "当前工作区",
+  "workspace_recent": "最近打开",
+  "workspace_close": "关闭工作区",
+  "workspace_switched": "已切换工作区",
+  "workspace_switched_msg": "当前工作区：{name}",
+  "workspace_closed": "已关闭工作区",
+  "workspace_switch_failed": "切换工作区失败",
+  "workspace_folder_missing": "该工作区文件夹已不存在，可能被移动、重命名或删除。",
+  "settings_workspace_actions": "工作区操作"
 }
