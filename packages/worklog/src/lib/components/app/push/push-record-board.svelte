@@ -126,14 +126,14 @@
         <div class="empty-state">
             <SendAlt size={32} />
             <p>暂无推送记录</p>
-            <span class="empty-hint">从工单菜单中选择「远程推送」来推送数据。</span>
+            <span class="empty-hint">从待办菜单中选择「远程推送」来推送数据。</span>
         </div>
     {:else}
         <div class="records-table-wrap">
             <table class="push-records-table">
                 <thead>
                     <tr>
-                        <th>工单 ID</th>
+                        <th>待办 ID</th>
                         <th>状态</th>
                         <th>推送时间</th>
                         <th>耗时</th>

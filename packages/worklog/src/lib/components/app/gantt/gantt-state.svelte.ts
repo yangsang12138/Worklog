@@ -2,10 +2,15 @@ import { getContext, setContext } from 'svelte';
 import {
     type Ticket,
     type TicketStatus,
-    TICKET_STATUS_ORDER,
     TICKET_STATUS_CONFIG
 } from "$lib/components/app/types";
 import { getTicketSort } from "$lib/hooks/ticket-sort.svelte";
+import {
+    boardColumns,
+    columnAccent,
+    columnTitle,
+    customColumnIcon,
+} from "$lib/components/app/column-registry.svelte";
 import { Pending, TaskComplete, InProgress as InProgressIcon, CheckmarkFilled } from "carbon-icons-svelte";
 import * as m from "$lib/paraglide/messages.js";
 import { formatDate } from "$lib/utils/date-format";
@@ -79,14 +84,37 @@ export class GanttState {
         return this.#sortHook.sortTickets(tickets);
     }
 
+    /** Groups follow the board's column configuration, custom stages included. */
     get groupedTickets() {
-        return TICKET_STATUS_ORDER.map((status) => ({
-            status,
-            label: TICKET_STATUS_CONFIG[status].label,
-            icon: statusIconMap[status],
-            color: statusColorMap[status],
-            tickets: this.filteredTickets.filter((t: Ticket) => t.status === status),
-        })).filter((g) => g.tickets.length > 0);
+        const columns = boardColumns();
+        const grouped = columns.map((column) => ({
+            status: column.status,
+            label: columnTitle(column.status),
+            icon: statusIconMap[column.status] ?? customColumnIcon(),
+            color:
+                statusColorMap[column.status] ??
+                columnAccent(column.status) ??
+                "#6f6f6f",
+            tickets: this.filteredTickets.filter((t: Ticket) => t.status === column.status),
+        }));
+
+        const known = new Set(columns.map((column) => column.status));
+        const orphans = new Set(
+            this.filteredTickets
+                .map((t: Ticket) => t.status)
+                .filter((status: string) => !known.has(status)),
+        );
+        for (const status of orphans) {
+            grouped.push({
+                status,
+                label: columnTitle(status),
+                icon: customColumnIcon(),
+                color: columnAccent(status) ?? "#6f6f6f",
+                tickets: this.filteredTickets.filter((t: Ticket) => t.status === status),
+            });
+        }
+
+        return grouped.filter((g) => g.tickets.length > 0);
     }
 
     get timeRange() {

@@ -602,6 +602,100 @@ async function migrate_v19(db: Database) {
     }
 }
 
+/**
+ * Migration v20:
+ * Add the per-board Kanban column configuration.
+ *
+ * `columns_config` holds a JSON array of KanbanColumnConfig. An empty string
+ * means "never customised" — the board then resolves to all four built-in
+ * columns, so existing boards keep their current appearance untouched.
+ */
+async function migrate_v20(db: Database) {
+    try {
+        await db.execute(`ALTER TABLE boards ADD COLUMN columns_config TEXT NOT NULL DEFAULT ''`);
+    } catch {
+        // Column may already exist on fresh installations with updated schema
+    }
+}
+
+/**
+ * Migration v21:
+ * Drop the `status` CHECK constraint so board columns can own custom stages.
+ *
+ * `status` used to be limited to the four built-in values, which made a
+ * user-defined column impossible. SQLite cannot alter a CHECK constraint, so
+ * the table is rebuilt (the same approach as v4/v5/v8/v12).
+ *
+ * Renaming `tickets` makes SQLite rewrite `push_records.ticket_id`'s
+ * REFERENCES clause to the temporary table name, leaving a dangling reference
+ * once the temporary table is dropped. `ensurePushSchema` runs immediately
+ * after the migration chain and repairs exactly that, so push records keep
+ * cascading correctly.
+ */
+async function migrate_v21(db: Database) {
+    const cols = await db.select<Array<{ name: string }>>(`PRAGMA table_info(tickets)`);
+    if (cols.length === 0) return;
+
+    const hasPushInfo = cols.some((column) => column.name === 'push_info');
+    const pushInfoSource = hasPushInfo ? 'push_info' : `'[]'`;
+
+    await db.execute(`PRAGMA foreign_keys = OFF`);
+    await db.execute(`BEGIN TRANSACTION`);
+
+    try {
+        await db.execute(`ALTER TABLE tickets RENAME TO tickets_v20`);
+
+        await db.execute(`
+            CREATE TABLE tickets (
+                id          TEXT PRIMARY KEY,
+                board_id    TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                title       TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status      TEXT NOT NULL DEFAULT 'todo',
+                priority    TEXT NOT NULL DEFAULT 'p2'
+                            CHECK (priority IN ('p1', 'p2', 'p3')),
+                ticket_type TEXT NOT NULL DEFAULT 'feature',
+                position    REAL NOT NULL DEFAULT 0,
+                due_date    TEXT,
+                start_date  TEXT,
+                labels      TEXT NOT NULL DEFAULT '[]',
+                comments    TEXT NOT NULL DEFAULT '[]',
+                push_info   TEXT NOT NULL DEFAULT '[]',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )
+        `);
+
+        await db.execute(`
+            INSERT INTO tickets (
+                id, board_id, title, description,
+                status, priority, ticket_type, position, due_date, start_date,
+                labels, comments, push_info, created_at, updated_at
+            )
+            SELECT
+                id, board_id, title, description,
+                status, priority, ticket_type, position, due_date, start_date,
+                labels, comments, ${pushInfoSource}, created_at, updated_at
+            FROM tickets_v20
+        `);
+
+        await db.execute(`DROP TABLE tickets_v20`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_board_id ON tickets(board_id)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_ticket_type ON tickets(ticket_type)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_due_date ON tickets(due_date)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_position ON tickets(position)`);
+
+        await db.execute(`COMMIT`);
+    } catch (error) {
+        await db.execute(`ROLLBACK`);
+        throw error;
+    } finally {
+        await db.execute(`PRAGMA foreign_keys = ON`);
+    }
+}
+
 export async function runMigrations(db: Database): Promise<void> {
     const rows = await db.select<{ schema_version: number }[]>(
         `SELECT schema_version FROM workspace_meta WHERE id = 1`
@@ -681,6 +775,14 @@ export async function runMigrations(db: Database): Promise<void> {
 
     if (current < 19) {
         await migrate_v19(db);
+    }
+
+    if (current < 20) {
+        await migrate_v20(db);
+    }
+
+    if (current < 21) {
+        await migrate_v21(db);
     }
 
     await db.execute(

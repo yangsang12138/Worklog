@@ -58,7 +58,7 @@ export const FIELD_CATALOG: CatalogField[] = [
         group: 'ticket',
         value_type: 'string',
         label_key: 'push_field_ticket_id',
-        label: '工单 ID',
+        label: '待办 ID',
         hint: '如 TKT-00UB68',
     },
     {
@@ -113,14 +113,14 @@ export const FIELD_CATALOG: CatalogField[] = [
         group: 'ticket',
         value_type: 'string',
         label_key: 'push_field_ticket_type',
-        label: '工单类型（代码）',
+        label: '待办类型（代码）',
     },
     {
         key: 'ticket.ticket_type_label',
         group: 'ticket',
         value_type: 'string',
         label_key: 'push_field_ticket_type_label',
-        label: '工单类型（名称）',
+        label: '待办类型（名称）',
     },
 
     // ── Ticket: labels & dates ───────────────────────────────────────────────
@@ -302,8 +302,13 @@ export function resolveCatalogValue(
 
         case 'ticket.status':
             return t.status;
-        case 'ticket.status_label':
-            return TICKET_STATUS_CONFIG[t.status]?.label ?? t.status;
+        case 'ticket.status_label': {
+            // A custom column's name lives on the board, not here — fall back
+            // to the raw status rather than losing the value.
+            const builtin =
+                TICKET_STATUS_CONFIG[t.status as keyof typeof TICKET_STATUS_CONFIG];
+            return builtin?.label ?? t.status;
+        }
         case 'ticket.priority':
             return t.priority;
         case 'ticket.priority_label':

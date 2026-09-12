@@ -4,12 +4,17 @@ import {
     type TicketStatus,
     type TicketPriority,
     type TicketType,
-    TICKET_STATUS_ORDER,
     TICKET_STATUS_CONFIG,
     TICKET_PRIORITY_CONFIG,
     TICKET_TYPE_CONFIG,
 } from "$lib/components/app/types";
 import { getTicketSort } from "$lib/hooks/ticket-sort.svelte";
+import {
+    boardColumns,
+    columnAccent,
+    columnTitle,
+    customColumnIcon,
+} from "$lib/components/app/column-registry.svelte";
 import {
     Pending,
     TaskComplete,
@@ -95,14 +100,42 @@ export class TableState {
         return this.#sortHook.sortTickets(tickets);
     }
 
+    /**
+     * Groups follow the board's column configuration, in column order, so a
+     * custom stage shows up as its own group. Tickets whose status is not a
+     * column of this board (e.g. synced from a board with different custom
+     * columns) still get a group rather than silently disappearing.
+     */
     get groupedTickets() {
-        return TICKET_STATUS_ORDER.map((status) => ({
-            status,
-            label: TICKET_STATUS_CONFIG[status].label,
-            icon: statusIconMap[status],
-            accentColor: statusAccentMap[status],
-            tickets: this.filteredTickets.filter((t: Ticket) => t.status === status),
+        const columns = boardColumns();
+        const grouped = columns.map((column) => ({
+            status: column.status,
+            label: columnTitle(column.status),
+            icon: statusIconMap[column.status] ?? customColumnIcon(),
+            accentColor:
+                statusAccentMap[column.status] ??
+                columnAccent(column.status) ??
+                "#6f6f6f",
+            tickets: this.filteredTickets.filter((t: Ticket) => t.status === column.status),
         }));
+
+        const known = new Set(columns.map((column) => column.status));
+        const orphans = new Set(
+            this.filteredTickets
+                .map((t: Ticket) => t.status)
+                .filter((status: string) => !known.has(status)),
+        );
+        for (const status of orphans) {
+            grouped.push({
+                status,
+                label: columnTitle(status),
+                icon: customColumnIcon(),
+                accentColor: columnAccent(status) ?? "#6f6f6f",
+                tickets: this.filteredTickets.filter((t: Ticket) => t.status === status),
+            });
+        }
+
+        return grouped;
     }
 
     get totalCount() {

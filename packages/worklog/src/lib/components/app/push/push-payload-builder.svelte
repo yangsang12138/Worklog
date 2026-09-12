@@ -40,16 +40,16 @@
     }
 
     const GROUP_LABELS: Record<CatalogGroup, string> = {
-        ticket: "工单",
+        ticket: "待办",
         board: "看板",
         app: "应用",
     };
 
     const SOURCE_LABELS: Record<FieldSourceKind, string> = {
-        ticket: "工单字段",
+        ticket: "待办字段",
         board: "看板字段",
         app: "应用字段",
-        mapped: "工单字段（值映射）",
+        mapped: "待办字段（值映射）",
         constant: "常量",
         variable: "变量（推送时填写）",
     };
@@ -231,7 +231,7 @@
                 {#if isQuery}
                     拼接到请求地址上的查询参数。左侧填参数名，右侧选取值来源，发送时会自动 URL 编码。
                 {:else}
-                    逐条声明「目标系统的字段路径 ← 取值来源」。来源可以是工单/看板/应用字段、固定常量，或推送时填写的变量。
+                    逐条声明「目标系统的字段路径 ← 取值来源」。来源可以是待办/看板/应用字段、固定常量，或推送时填写的变量。
                 {/if}
             </p>
         </div>
@@ -248,7 +248,7 @@
                 {#if isQuery}
                     点击「添加参数」开始，例如参数名 <code>projectKey</code> ← 常量 <code>TEST</code>。
                 {:else}
-                    点击「添加字段」开始，例如 目标路径 <code>fields.summary</code> ← 工单标题。
+                    点击「添加字段」开始，例如 目标路径 <code>fields.summary</code> ← 待办标题。
                 {/if}
             </span>
         </div>

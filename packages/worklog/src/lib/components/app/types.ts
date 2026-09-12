@@ -1,4 +1,15 @@
-export type TicketStatus = "backlog" | "todo" | "in_progress" | "done";
+/**
+ * The four fixed stages every board starts with.
+ *
+ * A ticket's status is *not* limited to these: a board can define custom
+ * columns, and those carry their own generated status values. Code that needs
+ * a label, colour or icon for a status must resolve it through the board's
+ * column configuration rather than indexing these maps directly.
+ */
+export type BuiltinTicketStatus = "backlog" | "todo" | "in_progress" | "done";
+
+/** A built-in status, or a custom column's generated status id. */
+export type TicketStatus = BuiltinTicketStatus | (string & {});
 export type TicketPriority = "p1" | "p2" | "p3";
 export type TicketType = "feature" | "bug" | "chore" | "improvement" | "epic" | "spike" | "story" | "task" | "subtask" | "incident" | "design" | "documentation";
 
@@ -38,14 +49,69 @@ export interface TicketStatusConfig {
     accentColor: string;
 }
 
-export const TICKET_STATUS_CONFIG: Record<TicketStatus, TicketStatusConfig> = {
+export const TICKET_STATUS_CONFIG: Record<BuiltinTicketStatus, TicketStatusConfig> = {
     backlog: { get label() { return m.status_backlog(); }, accentColor: "magenta" },
     todo: { get label() { return m.status_todo(); }, accentColor: "teal" },
     in_progress: { get label() { return m.status_in_progress(); }, accentColor: "blue" },
     done: { get label() { return m.status_done(); }, accentColor: "green" },
 };
 
-export const TICKET_STATUS_ORDER: TicketStatus[] = ["backlog", "todo", "in_progress", "done"];
+export const TICKET_STATUS_ORDER: BuiltinTicketStatus[] = ["backlog", "todo", "in_progress", "done"];
+
+/** True when a status belongs to one of the four fixed stages. */
+export function isBuiltinStatus(status: string): status is BuiltinTicketStatus {
+    return TICKET_STATUS_ORDER.includes(status as BuiltinTicketStatus);
+}
+
+// ── Kanban Columns ─────────────────────────────────────────────────────────
+// A board's columns are an ordered per-board list.
+//
+//   内置 (builtin) — the four fixed stages. Always present, never removable;
+//                    they can be renamed, annotated, collapsed, hidden and
+//                    reordered.
+//   自定义 (custom) — a stage the user added. It owns its own generated status
+//                    value, so tickets can sit in it. Removable once empty.
+//
+// `title` and `note` are *overrides*: null means "use the built-in default"
+// (i18n label / built-in note), which is why a built-in column keeps following
+// the UI language until it is renamed.
+
+export type KanbanColumnKind = "builtin" | "custom";
+
+export interface KanbanColumnConfig {
+    /**
+     * Which tickets this column holds — also the column's identity. Built-in
+     * columns use their fixed status; custom columns use a generated id.
+     */
+    status: TicketStatus;
+    kind: KanbanColumnKind;
+    /** Custom name — null keeps the built-in status label. */
+    title: string | null;
+    /** Custom remark — null keeps the built-in default note. */
+    note: string | null;
+    /** Custom accent key — null keeps the built-in status accent. */
+    accentColor: string | null;
+    /**
+     * Planned share of the board's width, as a relative weight. null means
+     * "not planned yet" and behaves as 1, so an untouched board divides its
+     * width evenly.
+     */
+    widthShare: number | null;
+    /** Collapsed to a narrow rail: still on the board, still a drop target. */
+    collapsed: boolean;
+    /** Hidden from the board entirely — managed from the column manager. */
+    hidden: boolean;
+}
+
+/** Accents offered to custom columns; assigned in order as they are created. */
+export const CUSTOM_COLUMN_ACCENTS = [
+    "teal",
+    "purple",
+    "cyan",
+    "magenta",
+    "blue",
+    "green",
+] as const;
 
 export interface TicketPriorityConfig {
     label: string;
@@ -122,6 +188,8 @@ export interface Board {
     name: string;
     description: string;
     tabs_config: string;
+    /** JSON-encoded KanbanColumnConfig[] — empty string means "built-in defaults". */
+    columns_config: string;
     archived_at: string | null;
     created_at: string;
     updated_at: string;

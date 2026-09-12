@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 21;
 
 export const CREATE_TABLES = `
   CREATE TABLE IF NOT EXISTS workspace_meta (
@@ -14,6 +14,7 @@ export const CREATE_TABLES = `
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     tabs_config TEXT NOT NULL DEFAULT '["kanban"]',
+    columns_config TEXT NOT NULL DEFAULT '',
     archived_at TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
@@ -34,8 +35,7 @@ export const CREATE_TABLES = `
     board_id    TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
     title       TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'todo'
-                CHECK (status IN ('backlog', 'todo', 'in_progress', 'done')),
+    status      TEXT NOT NULL DEFAULT 'todo',
     priority    TEXT NOT NULL DEFAULT 'p2'
                 CHECK (priority IN ('p1', 'p2', 'p3')),
     ticket_type TEXT NOT NULL DEFAULT 'feature',
@@ -44,6 +44,7 @@ export const CREATE_TABLES = `
     start_date  TEXT,
     labels      TEXT NOT NULL DEFAULT '[]',
     comments    TEXT NOT NULL DEFAULT '[]',
+    push_info   TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
   );

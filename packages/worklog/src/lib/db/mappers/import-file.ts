@@ -71,6 +71,7 @@ export async function importFromFile(
                             name: `Imported Board (${ticket.board_id})`,
                             description: '',
                             tabs_config: '["kanban"]',
+                            columns_config: '',
                             created_at: new Date().toISOString(),
                             updated_at: new Date().toISOString(),
                             archived_at: new Date().toISOString()

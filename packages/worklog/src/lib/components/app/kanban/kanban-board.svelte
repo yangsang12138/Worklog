@@ -1,27 +1,40 @@
 <!-- src/lib/components/app/kanban/kanban-board.svelte -->
 <script lang="ts">
-    import { InlineNotification } from "carbon-components-svelte";
+    import { InlineNotification, Button } from "carbon-components-svelte";
+    import { Settings, View, ViewOff } from "carbon-icons-svelte";
     import KanbanColumn from "./kanban-column.svelte";
+    import KanbanColumnManager from "./kanban-column-manager.svelte";
     import TicketAddEditModal from "./ticket-add-edit-modal.svelte";
     import TicketDeleteConfirm from "./ticket-delete-confirm.svelte";
     import TicketPreviewSheet from "./ticket-preview-sheet.svelte";
+    import { accentColor, builtinColumnNote, statusIcon } from "./column-defaults";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import { getTickets } from "$lib/hooks/tickets.svelte";
     import { getTicketSort } from "$lib/hooks/ticket-sort.svelte";
+    import { getBoardColumns } from "$lib/hooks/board-columns.svelte";
     import {
         type Ticket,
         type TicketStatus,
         type Comment,
         TICKET_STATUS_CONFIG,
-        TICKET_STATUS_ORDER,
+        isBuiltinStatus,
     } from "$lib/components/app/types";
+    import {
+        columnWeight,
+        findColumn,
+        visibleColumns,
+    } from "$lib/db/columns-config";
     import { getDb, SettingsRepo } from "$lib/db";
     import * as m from "$lib/paraglide/messages.js";
 
     type Column = {
         status: TicketStatus;
         label: string;
+        note: string;
+        collapsed: boolean;
         accentColor: string;
+        icon: ReturnType<typeof statusIcon>;
+        grow: number;
         tickets: Ticket[];
     };
 
@@ -33,44 +46,52 @@
 
     const ticketsHook = getTickets(getWorkspacePath, getBoardId);
     const sortHook = getTicketSort();
+    const columnsApi = getBoardColumns(getWorkspacePath, getBoardId);
 
     let loadError = $state<string | null>(null);
     let actionError = $state<string | null>(null);
+    let managerOpen = $state(false);
 
     // Loading is now handled by the parent component (+page.svelte)
 
-    // ── Column definitions from config ─────────────────────────────────────────
-    function getStatusLabel(status: TicketStatus) {
-        switch (status) {
-            case "backlog":
-                return m.status_backlog();
-            case "todo":
-                return m.status_todo();
-            case "in_progress":
-                return m.status_in_progress();
-            case "done":
-                return m.status_done();
-        }
+    // ── Column definitions from the board's column config ──────────────────────
+    // A column keeps the built-in status label unless it carries a custom name,
+    // and falls back to the built-in remark unless it carries a custom one.
+    const configColumns = $derived(visibleColumns(columnsApi.columns));
+
+    /** Built-in translated label, or empty for a custom stage. */
+    function builtinLabel(status: TicketStatus): string {
+        return isBuiltinStatus(status)
+            ? TICKET_STATUS_CONFIG[status].label
+            : "";
     }
 
-    const columnsDef = $derived(
-        TICKET_STATUS_ORDER.map((status) => ({
-            status,
-            label: getStatusLabel(status),
-            accentColor: TICKET_STATUS_CONFIG[status].accentColor,
-        })),
-    );
-
     let columns = $derived(
-        columnsDef.map((def) => {
+        configColumns.map((config): Column => {
             const columnTickets = ticketsHook.tickets.filter(
-                (ticket) => ticket.status === def.status,
+                (ticket) => ticket.status === config.status,
             );
             return {
-                ...def,
+                status: config.status,
+                // A custom stage has no built-in text: it always carries its
+                // own name, and falls back to the neutral stage icon.
+                label: config.title ?? builtinLabel(config.status),
+                note: config.note ?? builtinColumnNote(config.status),
+                collapsed: config.collapsed,
+                accentColor:
+                    config.accentColor ??
+                    (isBuiltinStatus(config.status)
+                        ? TICKET_STATUS_CONFIG[config.status].accentColor
+                        : "blue"),
+                icon: statusIcon(config.status),
+                grow: columnWeight(config),
                 tickets: sortHook.sortTickets(columnTickets),
             };
         }),
+    );
+
+    const hiddenColumnList = $derived(
+        columnsApi.columns.filter((column) => column.hidden),
     );
 
     const filteredColumns = $derived(
@@ -94,6 +115,11 @@
                 : col.tickets,
         })),
     );
+
+    function statusLabel(status: TicketStatus): string {
+        const config = findColumn(columnsApi.columns, status);
+        return config?.title ?? builtinLabel(status) ?? status;
+    }
 
     // ── DnD handlers ───────────────────────────────────────────────────────────
     function makeHandlers(targetStatus: TicketStatus) {
@@ -137,16 +163,6 @@
                             const prev = items[newIndex - 1].position ?? 0;
                             const next = items[newIndex + 1].position ?? 0;
                             newPosition = (prev + next) / 2;
-                        }
-
-                        // Optimistic update of local tickets array for smoother UI
-                        // svelte-dnd-action already handles the visual dom manipulation but
-                        // we need to make sure Svelte state matches immediately before DB call finishes
-                        const ticketIdx = ticketsHook.tickets.findIndex(
-                            (t) => t.id === movedTicketId,
-                        );
-                        if (ticketIdx !== -1) {
-                            // this relies on ticketsHook not preventing direct mutations or reacting to them if needed
                         }
 
                         actionError = null;
@@ -282,20 +298,24 @@
     }
 
     // ── Stats (exclude backlog from progress) ─────────────────────────────────
+    // Counts come from the DB aggregates, not from the (paginated) loaded
+    // tickets, so hidden and partly-loaded columns still report real totals.
+    const BUILTIN_DONE: TicketStatus = "done";
+    const BUILTIN_BACKLOG: TicketStatus = "backlog";
+
     const activeTickets = $derived(
-        columns
-            .filter((c) => c.status !== "backlog")
-            .reduce((s, c) => s + c.tickets.length, 0),
+        columnsApi.columns
+            .filter((column) => column.status !== BUILTIN_BACKLOG)
+            .reduce(
+                (sum, column) => sum + (ticketsHook.counts[column.status] ?? 0),
+                0,
+            ),
     );
-    const doneCount = $derived(
-        columns.find((c) => c.status === "done")?.tickets.length ?? 0,
-    );
+    const doneCount = $derived(ticketsHook.counts[BUILTIN_DONE] ?? 0);
     const progress = $derived(
         activeTickets > 0 ? Math.round((doneCount / activeTickets) * 100) : 0,
     );
-    const totalTickets = $derived(
-        columns.reduce((s, c) => s + c.tickets.length, 0),
-    );
+    const backlogCount = $derived(ticketsHook.counts[BUILTIN_BACKLOG] ?? 0);
 
     // Listen for create-ticket events from the command palette / shortcuts
     $effect(() => {
@@ -319,13 +339,24 @@
         <div class="progress-bar">
             <div class="progress-fill" style="width: {progress}%"></div>
         </div>
-        {#if totalTickets !== activeTickets}
+        {#if backlogCount > 0}
             <span class="stats-text stats-backlog"
-                >{m.kanban_stats_backlog({
-                    count: totalTickets - activeTickets,
-                })}</span
+                >{m.kanban_stats_backlog({ count: backlogCount })}</span
             >
         {/if}
+
+        <span class="stats-spacer"></span>
+
+        <!-- Column manager entry point -->
+        <Button
+            kind="ghost"
+            size="small"
+            icon={Settings}
+            onclick={() => (managerOpen = true)}
+            title={m.column_manager_aria()}
+        >
+            {m.column_manager_title()}
+        </Button>
     </div>
 
     {#if searchQuery && filteredColumns.every((c) => c.tickets.length === 0)}
@@ -355,6 +386,15 @@
         />
     {/if}
 
+    {#if columnsApi.saveError}
+        <InlineNotification
+            kind="error"
+            title={m.column_save_error_title()}
+            subtitle={columnsApi.saveError}
+            on:close={() => columnsApi.clearSaveError()}
+        />
+    {/if}
+
     <!-- Columns -->
     <div
         class="board-columns"
@@ -362,27 +402,85 @@
         role="main"
         aria-label={m.kanban_board_aria()}
     >
-        {#each filteredColumns as col (col.status)}
-            {@const handlers = makeHandlers(col.status)}
-            <KanbanColumn
-                label={col.label}
-                status={col.status}
-                tickets={col.tickets}
-                totalCount={ticketsHook.counts[col.status]}
-                accentColor={col.accentColor}
-                isLoading={ticketsHook.loading}
-                onconsider={handlers.consider}
-                onfinalize={handlers.finalize}
-                onloadMore={ticketsHook.loadMore}
-                onAddTicket={openAddModal}
-                onEditTicket={openEditModal}
-                onDeleteTicket={promptDeleteTicket}
-                onStatusChange={handleStatusChange}
-                onPreviewTicket={openPreviewSheet}
-            />
-        {/each}
+        {#if columns.length === 0 && !columnsApi.loading}
+            <div class="all-hidden-state">
+                <ViewOff size={32} />
+                <h3>{m.column_all_hidden_title()}</h3>
+                <p>{m.column_all_hidden_desc()}</p>
+                <Button kind="tertiary" size="small" onclick={() => (managerOpen = true)}>
+                    {m.column_manager_title()}
+                </Button>
+            </div>
+        {:else}
+            {#each filteredColumns as col (col.status)}
+                {@const handlers = makeHandlers(col.status)}
+                <KanbanColumn
+                    label={col.label}
+                    status={col.status}
+                    tickets={col.tickets}
+                    note={col.note}
+                    collapsed={col.collapsed}
+                    totalCount={ticketsHook.counts[col.status]}
+                    accentColor={col.accentColor}
+                    isLoading={ticketsHook.loading}
+                    onconsider={handlers.consider}
+                    onfinalize={handlers.finalize}
+                    onloadMore={ticketsHook.loadMore}
+                    onAddTicket={openAddModal}
+                    onEditTicket={openEditModal}
+                    onDeleteTicket={promptDeleteTicket}
+                    onStatusChange={handleStatusChange}
+                    onPreviewTicket={openPreviewSheet}
+                    onToggleCollapse={(status) => void columnsApi.toggleCollapsed(status)}
+                    icon={col.icon}
+                    grow={col.collapsed ? 0 : col.grow}
+                />
+            {/each}
+        {/if}
+
+        <!-- Hidden columns stay reachable without opening the manager -->
+        {#if hiddenColumnList.length > 0}
+            <aside class="hidden-columns-card">
+                <div class="hidden-columns-header">
+                    <ViewOff size={16} />
+                    <span>{m.column_hidden_strip({ count: hiddenColumnList.length })}</span>
+                </div>
+                <p class="hidden-columns-hint">{m.column_hidden_strip_hint()}</p>
+                <div class="hidden-columns-list">
+                    {#each hiddenColumnList as column (column.status)}
+                        <button
+                            type="button"
+                            class="hidden-column-item"
+                            onclick={() => void columnsApi.toggleHidden(column.status)}
+                            title={column.note ?? builtinColumnNote(column.status)}
+                        >
+                            <span>{statusLabel(column.status)}</span>
+                            <View size={14} />
+                        </button>
+                    {/each}
+                </div>
+            </aside>
+        {/if}
     </div>
 </div>
+
+<!-- ── Column Manager ───────────────────────────────────────────────────────── -->
+<KanbanColumnManager
+    bind:open={managerOpen}
+    columns={columnsApi.columns}
+    counts={ticketsHook.counts}
+    onAddCustom={(title) => void columnsApi.addCustomColumn(title)}
+    onRemove={(status) => void columnsApi.removeColumn(status)}
+    onSetTitle={(status, title) => void columnsApi.setTitle(status, title)}
+    onSetNote={(status, note) => void columnsApi.setNote(status, note)}
+    onReset={(status) => void columnsApi.resetColumn(status)}
+    onToggleCollapsed={(status) => void columnsApi.toggleCollapsed(status)}
+    onToggleHidden={(status) => void columnsApi.toggleHidden(status)}
+    onMove={(status, delta) => void columnsApi.moveColumn(status, delta)}
+    onSetWidthShare={(status, weight) =>
+        void columnsApi.setWidthShare(status, weight)}
+    onResetWidthShares={() => void columnsApi.resetWidthShares()}
+/>
 
 <!-- ── Add / Edit Modal ──────────────────────────────────────────────────────── -->
 <TicketAddEditModal
@@ -476,6 +574,10 @@
         opacity: 0.7;
     }
 
+    .stats-spacer {
+        flex: 1;
+    }
+
     .progress-bar {
         width: 100px;
         height: 4px;
@@ -489,5 +591,83 @@
         background: var(--cds-support-02);
         border-radius: 2px;
         transition: width 0.4s ease;
+    }
+
+    /* ── All columns hidden ─────────────────────────────────────────────── */
+    .all-hidden-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        width: 100%;
+        text-align: center;
+        color: var(--cds-text-02);
+    }
+
+    .all-hidden-state h3 {
+        margin: 0;
+        font-size: 1rem;
+        color: var(--cds-text-01);
+    }
+
+    .all-hidden-state p {
+        margin: 0 0 0.5rem;
+        font-size: 0.8125rem;
+    }
+
+    /* ── Hidden columns card ─────────────────────────────────────────────── */
+    .hidden-columns-card {
+        flex: 0 0 220px;
+        align-self: flex-start;
+        border: 1px dashed var(--cds-ui-04);
+        border-radius: 2px;
+        padding: 0.75rem;
+        background: transparent;
+    }
+
+    .hidden-columns-header {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--cds-text-02);
+        margin-bottom: 0.25rem;
+    }
+
+    .hidden-columns-hint {
+        font-size: 0.6875rem;
+        color: var(--cds-text-02);
+        margin: 0 0 0.5rem;
+        opacity: 0.8;
+    }
+
+    .hidden-columns-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .hidden-column-item {
+        all: unset;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.25rem 0.375rem;
+        font-size: 0.75rem;
+        color: var(--cds-text-01);
+        border-radius: 2px;
+        cursor: pointer;
+    }
+
+    .hidden-column-item:hover {
+        background: var(--cds-hover-ui);
+    }
+
+    .hidden-column-item:focus-visible {
+        outline: 2px solid var(--cds-focus, #0f62fe);
+        outline-offset: -2px;
     }
 </style>

@@ -26,6 +26,7 @@
         TaskComplete,
         InProgress as InProgressIcon,
         CheckmarkFilled,
+        CircleDash,
         Time,
         Send,
         ChevronDown,
@@ -38,7 +39,13 @@
         type TicketPriority,
         TICKET_PRIORITY_CONFIG,
         TICKET_STATUS_CONFIG,
+        TICKET_STATUS_ORDER,
     } from "$lib/components/app/types";
+    import {
+        boardColumns,
+        columnAccent,
+        columnTitle,
+    } from "$lib/components/app/column-registry.svelte";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import * as m from "$lib/paraglide/messages.js";
 
@@ -83,12 +90,21 @@
         p3: ArrowDown,
     };
 
-    const statusIconMap: Record<TicketStatus, any> = {
-        backlog: Pending,
-        todo: TaskComplete,
-        in_progress: InProgressIcon,
-        done: CheckmarkFilled,
-    };
+    /** Built-in icons; a custom stage falls back to a neutral marker. */
+    function statusIconFor(status: TicketStatus) {
+        switch (status) {
+            case "backlog":
+                return Pending;
+            case "todo":
+                return TaskComplete;
+            case "in_progress":
+                return InProgressIcon;
+            case "done":
+                return CheckmarkFilled;
+            default:
+                return CircleDash;
+        }
+    }
 
     // ── Derived values ───────────────────────────────────────────────────────────
     const customType = $derived(
@@ -122,10 +138,18 @@
     );
 
     const statusConfig = $derived(
-        ticket ? TICKET_STATUS_CONFIG[ticket.status] : null,
+        ticket
+            ? TICKET_STATUS_CONFIG[
+                  ticket.status as keyof typeof TICKET_STATUS_CONFIG
+              ]
+            : null,
+    );
+    // Column names are board-configurable — always render through the registry.
+    const statusLabel = $derived(
+        ticket ? columnTitle(ticket.status) : "",
     );
     const StatusIcon = $derived(
-        ticket ? statusIconMap[ticket.status] : Pending,
+        ticket ? statusIconFor(ticket.status) : Pending,
     );
 
     const isOverdue = $derived.by(() => {
@@ -267,14 +291,13 @@
         <header class="sheet-header">
             <div class="sheet-header-left">
                 <span class="sheet-ticket-id">#{ticket.id}</span>
-                {#if statusConfig}
-                    <span
-                        class="sheet-status-badge sheet-status-badge--{ticket.status}"
-                    >
-                        <StatusIcon size={13} />
-                        {statusConfig.label}
-                    </span>
-                {/if}
+                <span
+                    class="sheet-status-badge"
+                    style="border-color: {columnAccent(ticket.status) ?? 'transparent'}"
+                >
+                    <StatusIcon size={13} />
+                    {statusLabel}
+                </span>
             </div>
             <div class="sheet-header-actions">
                 <Button
@@ -344,12 +367,10 @@
                     <div class="detail-grid-item detail-grid-item--full">
                         <span class="detail-grid-label">{m.preview_status()}</span>
                         <div class="detail-grid-value">
-                            {#if statusConfig}
-                                <div class="detail-status-row">
-                                    <StatusIcon size={14} />
-                                    <span>{statusConfig.label}</span>
-                                </div>
-                            {/if}
+                            <div class="detail-status-row">
+                                <StatusIcon size={14} />
+                                <span>{statusLabel}</span>
+                            </div>
                         </div>
                     </div>
 
@@ -428,18 +449,19 @@
             <section class="sheet-section">
                 <h3 class="sheet-section-title">{m.preview_move_to()}</h3>
                 <div class="sheet-status-actions">
-                    {#each ["backlog", "todo", "in_progress", "done"] as TicketStatus[] as s}
-                        {@const cfg = TICKET_STATUS_CONFIG[s]}
-                        {@const SIcon = statusIconMap[s]}
+                    {#each boardColumns() as column (column.status)}
+                        {@const label = columnTitle(column.status)}
+                        {@const SIcon = statusIconFor(column.status)}
                         <button
                             class="status-pill"
-                            class:status-pill--active={ticket.status === s}
-                            onclick={() => onStatusChange?.(ticket.id, s)}
-                            disabled={ticket.status === s}
-                            title={m.preview_move_to_label({ label: cfg.label })}
+                            class:status-pill--active={ticket.status === column.status}
+                            onclick={() =>
+                                onStatusChange?.(ticket.id, column.status)}
+                            disabled={ticket.status === column.status}
+                            title={m.preview_move_to_label({ label })}
                         >
                             <SIcon size={14} />
-                            <span>{cfg.label}</span>
+                            <span>{label}</span>
                         </button>
                     {/each}
                 </div>

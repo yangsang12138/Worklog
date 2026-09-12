@@ -1,13 +1,12 @@
 <script lang="ts">
     import {
         Settings,
-        CopyFile,
-        Launch,
         TrashCan,
         Edit,
         Archive,
         Calendar,
         Dashboard,
+        OverflowMenuVertical,
     } from "carbon-icons-svelte";
     import { page } from "$app/stores";
     import * as m from "$lib/paraglide/messages.js";
@@ -32,6 +31,8 @@
     } from "carbon-components-svelte";
 
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
+    import { notifications } from "$lib/hooks/notifications.svelte";
+    import { useAppAppearance } from "$lib/hooks/app-appearance.svelte";
     import SyncBottomBar from "./sync-bottom-bar.svelte";
     import ArchivedBoardsModal from "./archived-boards-modal.svelte";
 
@@ -50,6 +51,15 @@
     }: WorkspaceSidebarProps = $props();
 
     const { boardsApi } = getWorkspaceShellContext();
+    const appAppearance = useAppAppearance();
+
+    // Which emphasis the active board gets in the list below — the user picks
+    // it in Settings → Appearance.
+    const boardHighlightClass = $derived(
+        appAppearance.boardHighlight === "background"
+            ? "board-highlight-background"
+            : "board-highlight-checkmark",
+    );
 
     let createModalOpen = $state(false);
     let draftName = $state("");
@@ -190,23 +200,76 @@
         creatingBoard = false;
     });
 
-    let boardRefs = $state<Record<string, HTMLElement | null>>({});
+    // ── Board actions menu ──────────────────────────────────────────────────
+    // One controlled ContextMenu serves every board: right-clicking a tile and
+    // pressing its "more options" button both place the same menu.
+    //
+    // Carbon's menu is `position: fixed` and at least 13rem wide; the item
+    // count is fixed (edit / archive / divider / delete), so the viewport
+    // clamp below is exact rather than a guess.
+    //
+    // `x`/`y` are bound rather than passed: the menu resets them to 0 when it
+    // closes itself, and a re-open at identical coordinates would otherwise
+    // never reach the component and the menu would render at the origin.
+    const BOARD_MENU_WIDTH = 208;
+    const BOARD_MENU_HEIGHT = 4 * 32 + 16;
+    const BOARD_MENU_MARGIN = 8;
 
-    function captureRef(node: HTMLElement, boardId: string) {
-        boardRefs[boardId] = node.closest(".bx--tile") as HTMLElement;
-        return {
-            destroy() {
-                if (boardRefs[boardId] === node.closest(".bx--tile")) {
-                    delete boardRefs[boardId];
-                }
-            },
-        };
+    let menuBoardId = $state<string | null>(null);
+    let boardMenuOpen = $state(false);
+    let boardMenuX = $state(0);
+    let boardMenuY = $state(0);
+
+    const menuBoard = $derived(
+        boardsApi.boards.find((board) => board.id === menuBoardId) ?? null,
+    );
+
+    function isBoardMenuOpen(boardId: string) {
+        return boardMenuOpen && menuBoardId === boardId;
     }
 
-    function copyToClipboard(text: string) {
-        if (navigator.clipboard) {
-            void navigator.clipboard.writeText(text);
+    function placeBoardMenu(boardId: string, x: number, y: number) {
+        const maxX = Math.max(
+            BOARD_MENU_MARGIN,
+            window.innerWidth - BOARD_MENU_WIDTH - BOARD_MENU_MARGIN,
+        );
+        const maxY = Math.max(
+            BOARD_MENU_MARGIN,
+            window.innerHeight - BOARD_MENU_HEIGHT - BOARD_MENU_MARGIN,
+        );
+
+        menuBoardId = boardId;
+        boardMenuX = Math.min(Math.max(BOARD_MENU_MARGIN, x), maxX);
+        boardMenuY = Math.min(Math.max(BOARD_MENU_MARGIN, y), maxY);
+        boardMenuOpen = true;
+    }
+
+    function openBoardMenuAtPointer(event: MouseEvent, boardId: string) {
+        event.preventDefault();
+        event.stopPropagation();
+        placeBoardMenu(boardId, event.clientX, event.clientY);
+    }
+
+    function toggleBoardMenu(event: MouseEvent, boardId: string) {
+        // Keep the tile's own click handler (select / open) out of this.
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (isBoardMenuOpen(boardId)) {
+            boardMenuOpen = false;
+            return;
         }
+
+        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        placeBoardMenu(
+            boardId,
+            rect.right - BOARD_MENU_WIDTH,
+            rect.bottom + 4,
+        );
+    }
+
+    function closeBoardMenu() {
+        boardMenuOpen = false;
     }
 
     let deleteBoardId = $state<string | null>(null);
@@ -288,10 +351,17 @@
 
     async function confirmDeleteBoard() {
         if (!deleteBoardId) return;
+        const boardId = deleteBoardId;
+
         try {
-            await boardsApi.remove(deleteBoardId);
+            await boardsApi.remove(boardId);
         } catch (error) {
             console.error("Failed to delete board:", error);
+            notifications.add({
+                kind: "error",
+                title: m.board_delete_failed(),
+                subtitle: String(error),
+            });
         } finally {
             deleteModalOpen = false;
             deleteBoardId = null;
@@ -305,6 +375,11 @@
             await boardsApi.archive(id);
         } catch (error) {
             console.error("Failed to archive board:", error);
+            notifications.add({
+                kind: "error",
+                title: m.board_archive_failed(),
+                subtitle: String(error),
+            });
         }
     }
 
@@ -317,7 +392,15 @@
     });
 </script>
 
-<SideNav class="workspace-sidebar" isOpen>
+<svelte:window
+    on:scroll|capture={() => {
+        // The menu is fixed-positioned; a scroll would leave it stranded.
+        if (boardMenuOpen) closeBoardMenu();
+    }}
+    on:resize={closeBoardMenu}
+/>
+
+<SideNav class="workspace-sidebar {boardHighlightClass}" isOpen>
     <SideNavItems>
         <div class="workspace-global-nav">
             <Button
@@ -364,55 +447,43 @@
                 on:select={handleBoardSelection}
             >
                 {#each boardsApi.boards as board (board.id)}
-                    <RadioTile
-                        value={board.id}
-                        onclick={() => handleBoardClick(board.id)}
+                    <div
+                        class="workspace-board-item"
+                        role="presentation"
+                        oncontextmenu={(event) =>
+                            openBoardMenuAtPointer(event, board.id)}
                     >
-                        <span
-                            class="workspace-board-name"
-                            use:captureRef={board.id}>{board.name}</span
+                        <RadioTile
+                            value={board.id}
+                            onclick={() => handleBoardClick(board.id)}
                         >
-                        {#if board.description}
-                            <span class="workspace-board-description">
-                                {board.description}
+                            <span class="workspace-board-row">
+                                <span class="workspace-board-text">
+                                    <span class="workspace-board-name"
+                                        >{board.name}</span
+                                    >
+                                    {#if board.description}
+                                        <span
+                                            class="workspace-board-description"
+                                        >
+                                            {board.description}
+                                        </span>
+                                    {/if}
+                                </span>
+                                <button
+                                    type="button"
+                                    class="workspace-board-menu-trigger"
+                                    aria-label={m.board_ctx_more()}
+                                    aria-haspopup="menu"
+                                    aria-expanded={isBoardMenuOpen(board.id)}
+                                    onclick={(event) =>
+                                        toggleBoardMenu(event, board.id)}
+                                >
+                                    <OverflowMenuVertical size={16} />
+                                </button>
                             </span>
-                        {/if}
-                    </RadioTile>
-
-                    <ContextMenu
-                        target={boardRefs[board.id]
-                            ? [boardRefs[board.id]]
-                            : []}
-                    >
-                        <ContextMenuOption
-                            labelText={m.board_ctx_open()}
-                            icon={Launch}
-                            on:click={() => openBoard(board.id)}
-                        />
-                        <ContextMenuOption
-                            labelText={m.board_ctx_edit()}
-                            icon={Edit}
-                            on:click={() => promptEditBoard(board)}
-                        />
-                        <ContextMenuOption
-                            labelText={m.board_ctx_copy_id()}
-                            icon={CopyFile}
-                            on:click={() => copyToClipboard(board.id)}
-                        />
-                        <ContextMenuDivider />
-                        <ContextMenuOption
-                            labelText={m.board_ctx_archive()}
-                            icon={Archive}
-                            on:click={() => promptArchiveBoard(board.id)}
-                        />
-                        <ContextMenuDivider />
-                        <ContextMenuOption
-                            kind="danger"
-                            labelText={m.board_ctx_delete()}
-                            icon={TrashCan}
-                            on:click={() => promptDeleteBoard(board.id)}
-                        />
-                    </ContextMenu>
+                        </RadioTile>
+                    </div>
                 {/each}
 
                 <!-- Sentinel for loading more boards -->
@@ -424,6 +495,34 @@
                     </div>
                 {/if}
             </TileGroup>
+        {/if}
+
+        {#if menuBoard}
+            {@const board = menuBoard}
+            <ContextMenu
+                target={[]}
+                bind:open={boardMenuOpen}
+                bind:x={boardMenuX}
+                bind:y={boardMenuY}
+            >
+                <ContextMenuOption
+                    labelText={m.board_ctx_edit()}
+                    icon={Edit}
+                    on:click={() => promptEditBoard(board)}
+                />
+                <ContextMenuOption
+                    labelText={m.board_ctx_archive()}
+                    icon={Archive}
+                    on:click={() => promptArchiveBoard(board.id)}
+                />
+                <ContextMenuDivider />
+                <ContextMenuOption
+                    kind="danger"
+                    labelText={m.board_ctx_delete()}
+                    icon={TrashCan}
+                    on:click={() => promptDeleteBoard(board.id)}
+                />
+            </ContextMenu>
         {/if}
     </SideNavItems>
 
@@ -705,9 +804,115 @@
         padding: 0 var(--cds-spacing-03, 0.5rem) var(--cds-spacing-04, 0.75rem);
     }
 
+    /* Every entry carries its own outline, so the list reads as a list of
+       items instead of free-floating blocks. */
+    :global(.workspace-board-group .bx--tile) {
+        border: 1px solid var(--cds-ui-03, #e0e0e0);
+        border-radius: 4px;
+        transition:
+            background-color 110ms cubic-bezier(0.2, 0, 0.38, 0.9),
+            border-color 110ms cubic-bezier(0.2, 0, 0.38, 0.9);
+    }
+
+    :global(.workspace-board-group .bx--tile:hover) {
+        border-color: var(--cds-ui-04, #8d8d8d);
+    }
+
+    :global(.workspace-board-group .bx--tile.bx--tile--is-selected) {
+        border-color: var(--cds-ui-05, #161616);
+    }
+
+    /* ── Active-board emphasis: background fill ────────────────────────────── */
+    /* The alternative to Carbon's selection check: the whole entry is filled
+       with the accent colour, so the check is dropped. */
+    :global(.workspace-sidebar.board-highlight-background .bx--tile.bx--tile--is-selected) {
+        background: color-mix(
+            in srgb,
+            var(--cds-interactive-01, #0f62fe) 18%,
+            transparent
+        );
+        border-color: var(--cds-interactive-01, #0f62fe);
+    }
+
+    :global(.workspace-sidebar.board-highlight-background .bx--tile.bx--tile--is-selected:hover) {
+        background: color-mix(
+            in srgb,
+            var(--cds-interactive-01, #0f62fe) 26%,
+            transparent
+        );
+    }
+
+    :global(.workspace-sidebar.board-highlight-background .bx--tile.bx--tile--is-selected .bx--tile__checkmark) {
+        display: none;
+    }
+
+    :global(.workspace-sidebar.board-highlight-background .bx--tile.bx--tile--is-selected .workspace-board-text) {
+        color: var(--cds-interactive-01, #0f62fe);
+    }
+
     :global(.workspace-board-group .bx--tile-content) {
         display: grid;
         gap: 0.25rem;
+    }
+
+    .workspace-board-item {
+        position: relative;
+    }
+
+    /* Entries are flush by default, which would weld neighbouring outlines
+       into a single double-line seam. */
+    .workspace-board-item + .workspace-board-item {
+        margin-top: 0.25rem;
+    }
+
+    .workspace-board-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: var(--cds-spacing-03, 0.5rem);
+    }
+
+    .workspace-board-text {
+        display: grid;
+        gap: 0.25rem;
+        min-width: 0;
+    }
+
+    /* Options entry point: mirrors the right-click menu on the same tile. */
+    .workspace-board-menu-trigger {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.5rem;
+        height: 1.5rem;
+        padding: 0;
+        border: 0;
+        border-radius: 2px;
+        background: transparent;
+        color: var(--cds-icon-02, #525252);
+        cursor: pointer;
+        opacity: 0;
+        transition:
+            opacity 110ms cubic-bezier(0.2, 0, 0.38, 0.9),
+            background-color 110ms cubic-bezier(0.2, 0, 0.38, 0.9);
+    }
+
+    .workspace-board-item:hover .workspace-board-menu-trigger,
+    .workspace-board-item:focus-within .workspace-board-menu-trigger,
+    .workspace-board-menu-trigger[aria-expanded="true"] {
+        opacity: 1;
+    }
+
+    .workspace-board-menu-trigger:hover {
+        background: var(--cds-hover-ui, #e5e5e5);
+        color: var(--cds-icon-01, #161616);
+    }
+
+    .workspace-board-menu-trigger:focus-visible {
+        opacity: 1;
+        outline: 2px solid var(--cds-focus, #0f62fe);
+        outline-offset: -2px;
     }
 
     .workspace-board-name {

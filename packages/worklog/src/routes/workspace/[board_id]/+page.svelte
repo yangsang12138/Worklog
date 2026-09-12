@@ -30,6 +30,8 @@
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import { getTickets } from "$lib/hooks/tickets.svelte";
     import { getBoardTabs } from "$lib/hooks/board-tabs.svelte";
+    import { getBoardColumns } from "$lib/hooks/board-columns.svelte";
+    import { setBoardColumns } from "$lib/components/app/column-registry.svelte";
     import type { TabType } from "$lib/components/app/types";
     import * as m from "$lib/paraglide/messages.js";
 
@@ -50,6 +52,11 @@
     );
 
     const boardTabsApi = getBoardTabs(
+        () => shell.workspace.path,
+        () => board?.id ?? null,
+    );
+
+    const boardColumnsApi = getBoardColumns(
         () => shell.workspace.path,
         () => board?.id ?? null,
     );
@@ -126,6 +133,18 @@
     $effect(() => {
         if (!board) return;
         void boardTabsApi.load();
+    });
+
+    // Load the board's Kanban column config when the board changes
+    $effect(() => {
+        if (!board) return;
+        void boardColumnsApi.load();
+    });
+
+    // Publish custom column names so every board-scoped view (Kanban, Table,
+    // Gantt, ticket preview) labels a status the same way.
+    $effect(() => {
+        setBoardColumns(boardColumnsApi.columns);
     });
 
     // Save/Restore tab type (Board-specific) — uses tab type string, not index

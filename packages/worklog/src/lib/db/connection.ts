@@ -30,6 +30,14 @@ export async function getDb(workspacePath: string): Promise<Database> {
     const { runMigrations } = await import('./migrate');
     await runMigrations(_db);
 
+    // ── Reconcile board columns ────────────────────────
+    // Same reason as the push tables below: a workspace can report the current
+    // schema_version while `boards` was created by older code and never
+    // upgraded, because `CREATE TABLE IF NOT EXISTS` is a no-op on an existing
+    // table. Without this, column config writes fail with "no such column".
+    const { ensureBoardSchema } = await import('./ensure-board-schema');
+    await ensureBoardSchema(_db);
+
     // ── Reconcile remote-push tables ───────────────────
     // Runs independently of schema_version: a workspace can report the current
     // version while its tables were created by older code and never upgraded

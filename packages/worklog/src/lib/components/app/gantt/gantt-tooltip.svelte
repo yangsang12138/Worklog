@@ -2,10 +2,8 @@
     import { Tag } from "carbon-components-svelte";
     import { Calendar } from "carbon-icons-svelte";
     import { getGanttState } from "./gantt-state.svelte";
-    import {
-        TICKET_STATUS_CONFIG,
-        TICKET_PRIORITY_CONFIG,
-    } from "$lib/components/app/types";
+    import { TICKET_PRIORITY_CONFIG } from "$lib/components/app/types";
+    import { columnTitle } from "$lib/components/app/column-registry.svelte";
 
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import * as m from "$lib/paraglide/messages.js";
@@ -28,7 +26,7 @@
         <div class="tip-row">
             <span class="tip-label">{m.preview_status()}</span>
             <Tag type="gray" size="sm"
-                >{TICKET_STATUS_CONFIG[state.hoveredTicket.status].label}</Tag
+                >{columnTitle(state.hoveredTicket.status)}</Tag
             >
         </div>
         <div class="tip-row">

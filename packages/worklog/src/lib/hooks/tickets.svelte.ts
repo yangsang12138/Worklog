@@ -1,5 +1,5 @@
 import type { Ticket, CreateTicketInput, UpdateTicketInput, Comment } from '$lib/components/app/types';
-import { getDb, TicketRepo } from '$lib/db';
+import { getDb, TicketRepo, BoardRepo } from '$lib/db';
 import {
     getUndoRedo,
     registerMutationHandler,
@@ -174,8 +174,11 @@ export function getTickets(
             const db = await getDb(workspacePath);
 
             if (hasBoardScope && boardId) {
-                // ── Board-scoped: paginated by status ────────────────────────
-                const statuses: string[] = ["backlog", "todo", "in_progress", "done"];
+                // ── Board-scoped: paginated per column ───────────────────────
+                // Statuses come from the board's column configuration, not a
+                // fixed list — a board can own custom stages.
+                const columns = await BoardRepo.getBoardColumns(db, boardId);
+                const statuses = columns.map((column) => column.status);
                 const [batchResults, countResults] = await Promise.all([
                     Promise.all(statuses.map(s => TicketRepo.listTickets(db, boardId, { status: s, limit: 20 }))),
                     Promise.all(statuses.map(s => TicketRepo.countTicketsByStatus(db, boardId, s)))

@@ -195,7 +195,7 @@
         on:click:button--primary={result?.success ? handleClose : handlePush}
         on:close={handleClose}
     >
-        <h3 slot="heading">远程推送工单</h3>
+        <h3 slot="heading">远程推送待办</h3>
 
         <div class="push-modal">
             <!-- Ticket under push -->

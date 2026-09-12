@@ -1,5 +1,16 @@
 import type Database from '@tauri-apps/plugin-sql';
-import type { Board, CreateBoardInput, TabType } from '$lib/components/app/types';
+import type {
+    Board,
+    CreateBoardInput,
+    KanbanColumnConfig,
+    TabType,
+    TicketStatus,
+} from '$lib/components/app/types';
+import { TICKET_STATUS_ORDER, ALL_BOARD_TABS } from '$lib/components/app/types';
+import {
+    parseBoardColumns,
+    serializeBoardColumns,
+} from '$lib/db/columns-config';
 import { generateId } from '$lib/utils';
 
 export async function listBoards(
@@ -39,15 +50,16 @@ export async function createBoard(db: Database, input: CreateBoardInput): Promis
         name: input.name,
         description: input.description ?? '',
         tabs_config: JSON.stringify(['kanban']),
+        columns_config: '',
         archived_at: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
     };
 
     await db.execute(
-        `INSERT INTO boards (id, name, description, tabs_config, archived_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [board.id, board.name, board.description, board.tabs_config, board.archived_at, board.created_at, board.updated_at]
+        `INSERT INTO boards (id, name, description, tabs_config, columns_config, archived_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [board.id, board.name, board.description, board.tabs_config, board.columns_config, board.archived_at, board.created_at, board.updated_at]
     );
 
     return board;
@@ -104,8 +116,7 @@ export function parseBoardTabs(raw: string | null | undefined): TabType[] {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
             // Filter to only valid TabType values
-            const valid: TabType[] = ['kanban', 'table', 'timeline', 'calendar', 'docs'];
-            return parsed.filter((t: string) => valid.includes(t as TabType));
+            return parsed.filter((t: string) => ALL_BOARD_TABS.includes(t as TabType));
         }
     } catch {
         // Malformed JSON — fall back to default
@@ -139,6 +150,44 @@ export async function updateBoardTabs(
     await db.execute(
         `UPDATE boards SET tabs_config = ?, updated_at = ? WHERE id = ?`,
         [tabsConfig, updatedAt, id],
+    );
+
+    return getBoardById(db, id);
+}
+
+// ── Kanban column configuration ───────────────────────────────────────────
+// Column membership, names, remarks and view state are stored per board as a
+// JSON array. `columns_config === ''` means "never customised" and resolves to
+// the four built-in columns.
+
+/**
+ * Parse the `columns_config` JSON column safely.
+ * Falls back to the built-in default columns when empty or malformed.
+ */
+export function parseColumns(raw: string | null | undefined): KanbanColumnConfig[] {
+    return parseBoardColumns(raw, TICKET_STATUS_ORDER);
+}
+
+/** Get the resolved column configuration for a board. */
+export async function getBoardColumns(
+    db: Database,
+    id: string,
+): Promise<KanbanColumnConfig[]> {
+    const board = await getBoardById(db, id);
+    return parseColumns(board?.columns_config);
+}
+
+/** Persist a board's column configuration. */
+export async function updateBoardColumns(
+    db: Database,
+    id: string,
+    columns: KanbanColumnConfig[],
+): Promise<Board | null> {
+    const updatedAt = new Date().toISOString();
+
+    await db.execute(
+        `UPDATE boards SET columns_config = ?, updated_at = ? WHERE id = ?`,
+        [serializeBoardColumns(columns), updatedAt, id],
     );
 
     return getBoardById(db, id);

@@ -72,6 +72,7 @@
         Checkmark,
         Close,
         CheckmarkOutline,
+        SquareFill,
         Moon,
         Sun,
         Screen,
@@ -1052,6 +1053,45 @@
                                             title={m.settings_custom_color()}
                                         />
                                     </div>
+                                </div>
+                            </div>
+                        </section>
+                    {/if}
+
+                    {#if matchesSearch("Board Highlight Emphasis Checkmark Background Sidebar 看板 凸显 高亮")}
+                        <section class="settings-section">
+                            <h2>{m.settings_board_highlight()}</h2>
+                            <p class="section-desc">
+                                {m.settings_board_highlight_desc()}
+                            </p>
+                            <div class="settings-card">
+                                <div class="theme-selector">
+                                    <button
+                                        class="theme-card"
+                                        class:selected={appAppearance.boardHighlight ===
+                                            "checkmark"}
+                                        onclick={() =>
+                                            (appAppearance.boardHighlight =
+                                                "checkmark")}
+                                    >
+                                        <CheckmarkOutline size={24} />
+                                        <span
+                                            >{m.settings_board_highlight_checkmark()}</span
+                                        >
+                                    </button>
+                                    <button
+                                        class="theme-card"
+                                        class:selected={appAppearance.boardHighlight ===
+                                            "background"}
+                                        onclick={() =>
+                                            (appAppearance.boardHighlight =
+                                                "background")}
+                                    >
+                                        <SquareFill size={24} />
+                                        <span
+                                            >{m.settings_board_highlight_background()}</span
+                                        >
+                                    </button>
                                 </div>
                             </div>
                         </section>

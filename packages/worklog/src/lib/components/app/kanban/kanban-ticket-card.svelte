@@ -41,6 +41,7 @@
         TICKET_PRIORITY_CONFIG,
     } from "$lib/components/app/types";
 
+    import { boardColumns, columnTitle } from "$lib/components/app/column-registry.svelte";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import * as m from "$lib/paraglide/messages.js";
     import PushTicketModal from "../push/push-ticket-modal.svelte";
@@ -170,22 +171,13 @@
             />
             <ContextMenuDivider />
             <ContextMenuOption labelText={m.ticket_ctx_move_to()} icon={ArrowRight}>
-                <ContextMenuOption
-                    labelText={m.status_backlog()}
-                    on:click={() => onStatusChange?.(ticket.id, "backlog")}
-                />
-                <ContextMenuOption
-                    labelText={m.status_todo()}
-                    on:click={() => onStatusChange?.(ticket.id, "todo")}
-                />
-                <ContextMenuOption
-                    labelText={m.status_in_progress()}
-                    on:click={() => onStatusChange?.(ticket.id, "in_progress")}
-                />
-                <ContextMenuOption
-                    labelText={m.status_done()}
-                    on:click={() => onStatusChange?.(ticket.id, "done")}
-                />
+                <!-- Every stage the board defines, custom columns included -->
+                {#each boardColumns() as column (column.status)}
+                    <ContextMenuOption
+                        labelText={columnTitle(column.status)}
+                        on:click={() => onStatusChange?.(ticket.id, column.status)}
+                    />
+                {/each}
             </ContextMenuOption>
             <ContextMenuDivider />
             <ContextMenuOption

@@ -164,7 +164,7 @@
         <div class="variable-empty">
             <p>还没有定义变量。</p>
             <span>
-                如果你希望推送时手动选择「工单类型」之类的值，就在这里定义一个下拉类型的变量。
+                如果你希望推送时手动选择「待办类型」之类的值，就在这里定义一个下拉类型的变量。
             </span>
         </div>
     {:else}
@@ -192,7 +192,7 @@
                             <input
                                 class="field-input"
                                 type="text"
-                                placeholder="工单类型"
+                                placeholder="待办类型"
                                 value={v.label}
                                 oninput={(e) =>
                                     updateVariable(i, {

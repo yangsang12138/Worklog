@@ -33,6 +33,11 @@ export async function importSnapshot(
     for (const boardSnap of snapshot.boards) {
         const board = boardSnap.board;
 
+        // A missing/empty config means "built-in defaults" — for an older
+        // export we must not clobber a local customisation with it.
+        const incomingColumns =
+            typeof board.columns_config === 'string' ? board.columns_config : '';
+
         // Check if board already exists
         const existing = await db.select<any[]>(
             `SELECT id FROM boards WHERE id = ?`, [board.id]
@@ -40,16 +45,23 @@ export async function importSnapshot(
 
         if (existing.length > 0) {
             if (strategy === 'merge') {
-                await db.execute(
-                    `UPDATE boards SET name = ?, description = ?, updated_at = ? WHERE id = ?`,
-                    [board.name, board.description, board.updated_at || now, board.id]
-                );
+                if (incomingColumns) {
+                    await db.execute(
+                        `UPDATE boards SET name = ?, description = ?, columns_config = ?, updated_at = ? WHERE id = ?`,
+                        [board.name, board.description, incomingColumns, board.updated_at || now, board.id]
+                    );
+                } else {
+                    await db.execute(
+                        `UPDATE boards SET name = ?, description = ?, updated_at = ? WHERE id = ?`,
+                        [board.name, board.description, board.updated_at || now, board.id]
+                    );
+                }
                 result.boardsUpdated++;
             }
         } else {
             await db.execute(
-                `INSERT INTO boards (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-                [board.id, board.name, board.description, board.created_at || now, board.updated_at || now]
+                `INSERT INTO boards (id, name, description, columns_config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+                [board.id, board.name, board.description, incomingColumns, board.created_at || now, board.updated_at || now]
             );
             result.boardsCreated++;
         }
