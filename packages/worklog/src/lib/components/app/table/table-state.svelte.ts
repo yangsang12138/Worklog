@@ -2,12 +2,11 @@ import { getContext, setContext } from 'svelte';
 import {
     type Ticket,
     type TicketStatus,
-    type TicketPriority,
     type TicketType,
     TICKET_STATUS_CONFIG,
-    TICKET_PRIORITY_CONFIG,
     TICKET_TYPE_CONFIG,
 } from "$lib/components/app/types";
+import { priorityWeight } from "$lib/components/app/priority-registry.svelte";
 import { getTicketSort } from "$lib/hooks/ticket-sort.svelte";
 import {
     boardColumns,
@@ -20,9 +19,6 @@ import {
     TaskComplete,
     InProgress as InProgressIcon,
     CheckmarkFilled,
-    ArrowUp,
-    ArrowRight,
-    ArrowDown,
     StarFilled,
     Debug,
     SettingsAdjust,
@@ -59,12 +55,6 @@ export const typeIconMap: Record<TicketType, any> = {
     incident: Warning,
     design: ColorPalette,
     documentation: Document,
-};
-
-export const priorityIconMap: Record<TicketPriority, any> = {
-    p1: ArrowUp,
-    p2: ArrowRight,
-    p3: ArrowDown,
 };
 
 const statusAccentMap: Record<TicketStatus, string> = {
@@ -145,7 +135,9 @@ export class TableState {
     customSort(a: any, b: any, { key }: { key: string }) {
         switch (key) {
             case "priority":
-                return String(a).localeCompare(String(b));
+                // Lower rank = more urgent, so the ordering matches the
+                // priority catalog the user arranged.
+                return priorityWeight(a) - priorityWeight(b);
             case "type":
                 return String(a).localeCompare(String(b));
             case "dueDate":

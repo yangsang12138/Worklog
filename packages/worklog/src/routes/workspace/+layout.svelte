@@ -6,6 +6,10 @@
     import WorkspaceSidebar from "$lib/components/app/layout/workspace/workspace-sidebar.svelte";
     import { getBoards } from "$lib/hooks/boards.svelte";
     import { useTicketTypes } from "$lib/hooks/ticket-types.svelte";
+    import { useTicketPriorities } from "$lib/hooks/ticket-priorities.svelte";
+    import { useTags } from "$lib/hooks/tags.svelte";
+    import { setTicketPriorities } from "$lib/components/app/priority-registry.svelte";
+    import { setWorkspaceTags } from "$lib/components/app/tag-registry.svelte";
     import {
         getWorkspaceShellContext,
         setWorkspaceShellContext,
@@ -26,9 +30,27 @@
     const workspace = getWorkspace();
     const boardsApi = getBoards(() => workspace.path);
     const ticketTypesApi = useTicketTypes(() => workspace.path);
+    const ticketPrioritiesApi = useTicketPriorities(() => workspace.path);
+    const tagsApi = useTags(() => workspace.path);
     const palette = getCommandPalette();
 
-    setWorkspaceShellContext({ workspace, boardsApi, ticketTypesApi });
+    setWorkspaceShellContext({
+        workspace,
+        boardsApi,
+        ticketTypesApi,
+        ticketPrioritiesApi,
+        tagsApi,
+    });
+
+    // Publish the priority and tag catalogs so every view resolves them the
+    // same way (colour, label, order).
+    $effect(() => {
+        setTicketPriorities(ticketPrioritiesApi.priorities);
+    });
+
+    $effect(() => {
+        setWorkspaceTags(tagsApi.tags);
+    });
 
     let lastLoadedWorkspacePath = $state<string | null>(null);
     let boardLoadError = $state<string | null>(null);
@@ -65,7 +87,12 @@
         lastLoadedWorkspacePath = workspacePath;
         boardLoadError = null;
 
-        void Promise.all([boardsApi.load(), ticketTypesApi.load()]).catch(
+        void Promise.all([
+            boardsApi.load(),
+            ticketTypesApi.load(),
+            ticketPrioritiesApi.load(),
+            tagsApi.load(),
+        ]).catch(
             (error) => {
                 boardLoadError = String(error);
                 lastLoadedWorkspacePath = null;

@@ -12,9 +12,7 @@
         Calendar,
         ChatBot,
         Draggable,
-        ArrowUp,
         ArrowRight,
-        ArrowDown,
         StarFilled,
         Debug,
         SettingsAdjust,
@@ -35,14 +33,20 @@
     import {
         type Ticket,
         type TicketStatus,
-        type TicketPriority,
         type TicketType,
         TICKET_TYPE_CONFIG,
-        TICKET_PRIORITY_CONFIG,
     } from "$lib/components/app/types";
 
     import { boardColumns, columnTitle } from "$lib/components/app/column-registry.svelte";
+    import {
+        priorityColor,
+        priorityIcon,
+        priorityLabel,
+    } from "$lib/components/app/priority-registry.svelte";
+    import { tagColorStyle } from "$lib/components/app/tag-registry.svelte";
+    import { formatStoredDateTime, isOverdueValue } from "$lib/utils/ticket-datetime";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
+    import { getReactiveLocale } from "$lib/hooks/locale.svelte";
     import * as m from "$lib/paraglide/messages.js";
     import PushTicketModal from "../push/push-ticket-modal.svelte";
 
@@ -79,13 +83,6 @@
         documentation: Document,
     };
 
-    // Carbon icon map for priorities
-    const priorityIconMap: Record<TicketPriority, any> = {
-        p1: ArrowUp,
-        p2: ArrowRight,
-        p3: ArrowDown,
-    };
-
     const customType = $derived(
         ticketTypesApi?.types?.find((t) => t.id === ticket.ticket_type)
     );
@@ -101,23 +98,15 @@
         Bookmark
     );
 
-    const priorityConfig = $derived(TICKET_PRIORITY_CONFIG[ticket.priority]);
-    const PriorityIcon = $derived(priorityIconMap[ticket.priority]);
+    const priorityConfig = $derived({
+        label: priorityLabel(ticket.priority),
+        color: priorityColor(ticket.priority),
+    });
+    const PriorityIcon = $derived(priorityIcon(ticket.priority));
 
     let cardElement = $state<HTMLElement>();
 
-    const isOverdue = $derived.by(() => {
-        if (!ticket.due_date || ticket.status === "done") return false;
-        
-        // Strip time from both dates for accurate day comparison
-        const due = new Date(ticket.due_date);
-        due.setHours(0, 0, 0, 0);
-        
-        const now = new Date();
-        now.setHours(0, 0, 0, 0);
-        
-        return due < now;
-    });
+    const isOverdue = $derived(isOverdueValue(ticket.due_date, ticket.status));
 
     function copyToClipboard(text: string) {
         if (navigator.clipboard) {
@@ -248,7 +237,11 @@
             {#if ticket.labels?.length}
                 <div class="ticket-tags">
                     {#each ticket.labels as tag}
-                        <Tag size="sm" type="cool-gray">{tag}</Tag>
+                        {#if tagColorStyle(tag)}
+                            <Tag size="sm" style={tagColorStyle(tag)}>{tag}</Tag>
+                        {:else}
+                            <Tag size="sm" type="cool-gray">{tag}</Tag>
+                        {/if}
                     {/each}
                 </div>
             {/if}
@@ -256,7 +249,10 @@
             <!-- Footer -->
             <div class="ticket-footer">
                 <div class="ticket-badges">
-                    <Tag size="sm" type={priorityConfig.tagColor}>
+                    <Tag 
+                        size="sm" 
+                        style="background-color: {priorityConfig.color}; color: white;"
+                    >
                         <span class="tag-with-icon">
                             <PriorityIcon size={12} />
                             {priorityConfig.label}
@@ -283,7 +279,12 @@
                     {#if ticket.due_date}
                         <span class="meta-item" class:overdue={isOverdue}>
                             <Calendar size={14} />
-                            <span>{ticket.due_date}</span>
+                            <span
+                                >{formatStoredDateTime(
+                                    ticket.due_date,
+                                    getReactiveLocale(),
+                                )}</span
+                            >
                         </span>
                     {/if}
                 </div>

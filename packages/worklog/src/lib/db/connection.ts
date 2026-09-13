@@ -66,6 +66,12 @@ export async function getDb(workspacePath: string): Promise<Database> {
         }
     }
 
+    // ── Seed priority levels and tags if empty ──────────
+    // Both are user-editable catalogs; this only ever fills an empty table, so
+    // deleting a seeded entry never brings it back.
+    const { seedCatalogs } = await import('./catalogs');
+    await seedCatalogs(_db);
+
     return _db;
 }
 

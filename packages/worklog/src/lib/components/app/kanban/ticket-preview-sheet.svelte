@@ -7,9 +7,7 @@
         TrashCan,
         Calendar,
         ChatBot,
-        ArrowUp,
         ArrowRight,
-        ArrowDown,
         StarFilled,
         Debug,
         SettingsAdjust,
@@ -36,17 +34,23 @@
     import {
         type Ticket,
         type TicketStatus,
-        type TicketPriority,
-        TICKET_PRIORITY_CONFIG,
         TICKET_STATUS_CONFIG,
         TICKET_STATUS_ORDER,
     } from "$lib/components/app/types";
+    import {
+        priorityColor,
+        priorityIcon,
+        priorityLabel,
+    } from "$lib/components/app/priority-registry.svelte";
+    import { tagColorStyle } from "$lib/components/app/tag-registry.svelte";
+    import { formatStoredDateTime, isOverdueValue } from "$lib/utils/ticket-datetime";
     import {
         boardColumns,
         columnAccent,
         columnTitle,
     } from "$lib/components/app/column-registry.svelte";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
+    import { getReactiveLocale } from "$lib/hooks/locale.svelte";
     import * as m from "$lib/paraglide/messages.js";
 
     let {
@@ -82,12 +86,6 @@
         incident: Warning,
         design: ColorPalette,
         documentation: Document,
-    };
-
-    const priorityIconMap: Record<TicketPriority, any> = {
-        p1: ArrowUp,
-        p2: ArrowRight,
-        p3: ArrowDown,
     };
 
     /** Built-in icons; a custom stage falls back to a neutral marker. */
@@ -131,10 +129,15 @@
     );
 
     const priorityConfig = $derived(
-        ticket ? TICKET_PRIORITY_CONFIG[ticket.priority] : null,
+        ticket
+            ? {
+                  label: priorityLabel(ticket.priority),
+                  color: priorityColor(ticket.priority),
+              }
+            : null,
     );
     const PriorityIcon = $derived(
-        ticket ? priorityIconMap[ticket.priority] : ArrowRight,
+        ticket ? priorityIcon(ticket.priority) : ArrowRight,
     );
 
     const statusConfig = $derived(
@@ -152,23 +155,12 @@
         ticket ? statusIconFor(ticket.status) : Pending,
     );
 
-    const isOverdue = $derived.by(() => {
-        if (!ticket?.due_date || ticket.status === "done") return false;
-        const due = new Date(ticket.due_date);
-        due.setHours(0, 0, 0, 0);
-        const now = new Date();
-        now.setHours(0, 0, 0, 0);
-        return due < now;
-    });
+    const isOverdue = $derived(
+        isOverdueValue(ticket?.due_date, ticket?.status ?? ""),
+    );
 
     function formatDate(dateStr: string | null | undefined): string {
-        if (!dateStr) return "—";
-        const d = new Date(dateStr);
-        return d.toLocaleDateString(undefined, {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-        });
+        return formatStoredDateTime(dateStr, getReactiveLocale());
     }
 
     function close() {
@@ -340,7 +332,10 @@
             <!-- Meta chips row -->
             <div class="sheet-chips">
                 {#if priorityConfig && PriorityIcon}
-                    <Tag size="sm" type={priorityConfig.tagColor}>
+                    <Tag
+                        size="sm"
+                        style="background-color: {priorityConfig.color}; color: #fff;"
+                    >
                         <span class="chip-inner">
                             <PriorityIcon size={12} />
                             {priorityConfig.label}
@@ -439,7 +434,13 @@
                     <h3 class="sheet-section-title">{m.preview_labels()}</h3>
                     <div class="sheet-labels">
                         {#each ticket.labels as label}
-                            <Tag size="sm" type="cool-gray">{label}</Tag>
+                            {#if tagColorStyle(label)}
+                                <Tag size="sm" style={tagColorStyle(label)}
+                                    >{label}</Tag
+                                >
+                            {:else}
+                                <Tag size="sm" type="cool-gray">{label}</Tag>
+                            {/if}
                         {/each}
                     </div>
                 </section>

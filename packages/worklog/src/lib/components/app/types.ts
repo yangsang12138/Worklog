@@ -10,7 +10,17 @@ export type BuiltinTicketStatus = "backlog" | "todo" | "in_progress" | "done";
 
 /** A built-in status, or a custom column's generated status id. */
 export type TicketStatus = BuiltinTicketStatus | (string & {});
-export type TicketPriority = "p1" | "p2" | "p3";
+
+/**
+ * The three levels every workspace starts with.
+ *
+ * Like a status, a ticket's priority is *not* limited to these: priorities are
+ * user-definable rows, and a custom level carries a generated id. Code that
+ * needs a label, colour or order must resolve it through the priority registry
+ * rather than indexing these maps directly.
+ */
+export type BuiltinTicketPriority = "p1" | "p2" | "p3";
+export type TicketPriority = BuiltinTicketPriority | (string & {});
 export type TicketType = "feature" | "bug" | "chore" | "improvement" | "epic" | "spike" | "story" | "task" | "subtask" | "incident" | "design" | "documentation";
 
 export type SyncState = "up_to_date" | "pending_changes" | "syncing";
@@ -118,7 +128,14 @@ export interface TicketPriorityConfig {
     tagColor: "green" | "teal" | "red";
 }
 
-export const TICKET_PRIORITY_CONFIG: Record<TicketPriority, TicketPriorityConfig> = {
+/**
+ * Fallback display config for the built-in levels.
+ *
+ * Only a starting point: the seeded `ticket_priorities` rows are what the UI
+ * normally reads, so these labels apply when a level is missing from the
+ * catalog (e.g. a ticket synced from a workspace that never seeded it).
+ */
+export const TICKET_PRIORITY_CONFIG: Record<BuiltinTicketPriority, TicketPriorityConfig> = {
     p3: { get label() { return m.modal_priority_low(); }, tagColor: "green" },
     p2: { get label() { return m.modal_priority_medium(); }, tagColor: "teal" },
     p1: { get label() { return m.modal_priority_high(); }, tagColor: "red" },

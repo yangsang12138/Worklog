@@ -1,5 +1,7 @@
 import type Database from '@tauri-apps/plugin-sql';
-import { SCHEMA_VERSION } from './schema';
+// Explicit extension: the migration chain is covered by `node --test`
+// (tests/priority-catalog.test.mjs), and Node's ESM resolver does not guess it.
+import { SCHEMA_VERSION } from './schema.ts';
 
 async function migrate_v2(db: Database): Promise<void> {
     await db.execute(`
@@ -696,6 +698,120 @@ async function migrate_v21(db: Database) {
     }
 }
 
+/**
+ * Migration v22:
+ * Make priority a user-definable attribute.
+ *
+ * `priority` used to be pinned to ('p1','p2','p3') by a CHECK constraint, which
+ * made a custom priority level impossible. SQLite cannot alter a CHECK
+ * constraint, so the table is rebuilt (same approach as v4/v5/v8/v12/v21).
+ *
+ * The two catalog tables are created here as well:
+ *   ticket_priorities — priority levels, ordered by `rank`
+ *   tags              — the label catalog behind the ticket tag picker
+ *
+ * Built-in p1/p2/p3 rows are seeded by `getDb` (not here) so that both fresh
+ * and migrated workspaces get them with names in the user's current language.
+ *
+ * Renaming `tickets` makes SQLite rewrite `push_records.ticket_id`'s
+ * REFERENCES clause to the temporary table name; `ensurePushSchema` runs right
+ * after the migration chain and repairs that.
+ */
+async function migrate_v22(db: Database) {
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS ticket_priorities (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            color       TEXT NOT NULL DEFAULT '#0f62fe',
+            rank        INTEGER NOT NULL DEFAULT 0,
+            is_default  INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+    `);
+
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS tags (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            color       TEXT NOT NULL DEFAULT 'cool-gray',
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )
+    `);
+
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_ticket_priorities_rank ON ticket_priorities(rank)`);
+    await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name ON tags(name)`);
+
+    const cols = await db.select<Array<{ name: string }>>(`PRAGMA table_info(tickets)`);
+    if (cols.length === 0) return;
+
+    // Already rebuilt (e.g. a fresh install created by the v22 schema): the
+    // constraining DDL is gone, so there is nothing left to rebuild.
+    const tableSql = await db.select<Array<{ sql: string | null }>>(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'`,
+    );
+    if (!tableSql[0]?.sql?.includes("CHECK (priority IN")) return;
+
+    const names = new Set(cols.map((column) => column.name));
+    const pushInfoSource = names.has('push_info') ? 'push_info' : `'[]'`;
+
+    await db.execute(`PRAGMA foreign_keys = OFF`);
+    await db.execute(`BEGIN TRANSACTION`);
+
+    try {
+        await db.execute(`ALTER TABLE tickets RENAME TO tickets_v21`);
+
+        await db.execute(`
+            CREATE TABLE tickets (
+                id          TEXT PRIMARY KEY,
+                board_id    TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                title       TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status      TEXT NOT NULL DEFAULT 'todo',
+                priority    TEXT NOT NULL DEFAULT 'p2',
+                ticket_type TEXT NOT NULL DEFAULT 'feature',
+                position    REAL NOT NULL DEFAULT 0,
+                due_date    TEXT,
+                start_date  TEXT,
+                labels      TEXT NOT NULL DEFAULT '[]',
+                comments    TEXT NOT NULL DEFAULT '[]',
+                push_info   TEXT NOT NULL DEFAULT '[]',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )
+        `);
+
+        await db.execute(`
+            INSERT INTO tickets (
+                id, board_id, title, description,
+                status, priority, ticket_type, position, due_date, start_date,
+                labels, comments, push_info, created_at, updated_at
+            )
+            SELECT
+                id, board_id, title, description,
+                status, priority, ticket_type, position, due_date, start_date,
+                labels, comments, ${pushInfoSource}, created_at, updated_at
+            FROM tickets_v21
+        `);
+
+        await db.execute(`DROP TABLE tickets_v21`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_board_id ON tickets(board_id)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_ticket_type ON tickets(ticket_type)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_due_date ON tickets(due_date)`);
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_tickets_position ON tickets(position)`);
+
+        await db.execute(`COMMIT`);
+    } catch (error) {
+        await db.execute(`ROLLBACK`);
+        throw error;
+    } finally {
+        await db.execute(`PRAGMA foreign_keys = ON`);
+    }
+}
+
 export async function runMigrations(db: Database): Promise<void> {
     const rows = await db.select<{ schema_version: number }[]>(
         `SELECT schema_version FROM workspace_meta WHERE id = 1`
@@ -783,6 +899,10 @@ export async function runMigrations(db: Database): Promise<void> {
 
     if (current < 21) {
         await migrate_v21(db);
+    }
+
+    if (current < 22) {
+        await migrate_v22(db);
     }
 
     await db.execute(

@@ -1,9 +1,10 @@
 import type { Ticket } from '$lib/components/app/types';
 import {
     TICKET_STATUS_CONFIG,
-    TICKET_PRIORITY_CONFIG,
     TICKET_TYPE_CONFIG,
 } from '$lib/components/app/types';
+import { priorityLabel } from '$lib/components/app/priority-registry.svelte';
+import { isOverdueValue } from '$lib/utils/ticket-datetime';
 import type {
     PushContext,
     PushVariableDef,
@@ -272,12 +273,7 @@ export function catalogLabel(key: string): string {
 // ── Value resolution ─────────────────────────────────────────────────────────
 
 function isTicketOverdue(ticket: Ticket): boolean {
-    if (!ticket.due_date || ticket.status === 'done') return false;
-    const due = new Date(ticket.due_date);
-    due.setHours(0, 0, 0, 0);
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    return due < now;
+    return isOverdueValue(ticket.due_date, ticket.status);
 }
 
 /**
@@ -312,7 +308,7 @@ export function resolveCatalogValue(
         case 'ticket.priority':
             return t.priority;
         case 'ticket.priority_label':
-            return TICKET_PRIORITY_CONFIG[t.priority]?.label ?? t.priority;
+            return priorityLabel(t.priority);
         case 'ticket.ticket_type':
             return t.ticket_type;
         case 'ticket.ticket_type_label':

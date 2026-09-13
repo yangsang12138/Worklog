@@ -1,13 +1,9 @@
-import type { Ticket, TicketPriority } from "$lib/components/app/types";
+import type { Ticket } from "$lib/components/app/types";
+import { priorityWeight } from "$lib/components/app/priority-registry.svelte";
+import { parseStoredDateTime } from "$lib/utils/ticket-datetime";
 
 export type TicketSortField = "position" | "priority" | "due_date" | "created_at" | "title" | "ticket_type";
 export type SortOrder = "asc" | "desc";
-
-const PRIORITY_VALUE: Record<TicketPriority, number> = {
-    p1: 1, // High
-    p2: 2, // Medium
-    p3: 3, // Low
-};
 
 const STORAGE_KEY_BY = "worklog:sort-by";
 const STORAGE_KEY_ORDER = "worklog:sort-order";
@@ -31,13 +27,19 @@ export function getTicketSort() {
 
             switch (_sortBy) {
                 case "priority":
-                    comparison = (PRIORITY_VALUE[a.priority] || 99) - (PRIORITY_VALUE[b.priority] || 99);
+                    // Ordered by the catalog the user arranged, so a custom
+                    // level sorts where they put it.
+                    comparison = priorityWeight(a.priority) - priorityWeight(b.priority);
                     break;
                 case "due_date":
                     if (!a.due_date && !b.due_date) comparison = 0;
                     else if (!a.due_date) comparison = 1;
                     else if (!b.due_date) comparison = -1;
-                    else comparison = new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+                    else {
+                        comparison =
+                            (parseStoredDateTime(a.due_date)?.getTime() ?? 0) -
+                            (parseStoredDateTime(b.due_date)?.getTime() ?? 0);
+                    }
                     break;
                 case "created_at":
                     comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
