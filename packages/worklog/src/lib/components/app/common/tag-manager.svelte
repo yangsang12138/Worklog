@@ -1,16 +1,23 @@
 <script lang="ts">
-    import { Tag, TextInput, Button } from "carbon-components-svelte";
-    import { Add } from "carbon-icons-svelte";
+    import { Tag } from "carbon-components-svelte";
+    import { Add, SettingsAdjust } from "carbon-icons-svelte";
+    import { tagColorStyle } from "$lib/components/app/tag-registry.svelte";
     import * as m from "$lib/paraglide/messages.js";
 
     let {
         selectedTags = $bindable([]),
         availableTags = [],
         label,
+        onManage,
+        onCreateTag,
     }: {
         selectedTags: string[];
         availableTags: string[];
         label?: string;
+        /** Open the tag catalog manager — omit to hide the entry point. */
+        onManage?: () => void;
+        /** Persist a newly typed tag so it is suggested next time. */
+        onCreateTag?: (name: string) => void;
     } = $props();
 
     let inputValue = $state("");
@@ -28,6 +35,11 @@
         const cleanTag = tag.trim().toLowerCase();
         if (cleanTag && !selectedTags.includes(cleanTag)) {
             selectedTags = [...selectedTags, cleanTag];
+            // Promote a free-typed tag into the catalog so it becomes a
+            // suggestion instead of being retyped every time.
+            if (!availableTags.some((t) => t.toLowerCase() === cleanTag)) {
+                onCreateTag?.(cleanTag);
+            }
         }
         inputValue = "";
     }
@@ -52,14 +64,41 @@
 </script>
 
 <div class="tag-manager">
-    <label class="tag-label" for="tag-input">{label ?? m.modal_tags()}</label>
+    <div class="tag-label-row">
+        <label class="tag-label" for="tag-input">{label ?? m.modal_tags()}</label>
+        {#if onManage}
+            <button
+                type="button"
+                class="tag-manage"
+                title={m.catalog_title_tag()}
+                aria-label={m.catalog_title_tag()}
+                onclick={onManage}
+            >
+                <SettingsAdjust size={12} />
+            </button>
+        {/if}
+    </div>
 
     <div class="tag-input-container" class:focused={isFocused}>
         <div class="selected-tags">
             {#each selectedTags as tag}
-                <Tag type="cool-gray" filter on:close={() => removeTag(tag)}>
-                    {tag}
-                </Tag>
+                {#if tagColorStyle(tag)}
+                    <Tag
+                        filter
+                        style={tagColorStyle(tag)}
+                        on:close={() => removeTag(tag)}
+                    >
+                        {tag}
+                    </Tag>
+                {:else}
+                    <Tag
+                        type="cool-gray"
+                        filter
+                        on:close={() => removeTag(tag)}
+                    >
+                        {tag}
+                    </Tag>
+                {/if}
             {/each}
             <input
                 id="tag-input"
@@ -75,6 +114,9 @@
         {#if isFocused && (filteredSuggestions.length > 0 || (inputValue.trim() && !selectedTags.includes(inputValue
                             .trim()
                             .toLowerCase())))}
+            <!-- Opens downward: the tag field sits near the top of the ticket
+                 modal, so a suggestion list that grew upward would leave the
+                 dialog. -->
             <div class="suggestions-dropdown">
                 {#each filteredSuggestions as suggestion}
                     <button
@@ -112,9 +154,33 @@
         width: 100%;
     }
 
+    .tag-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.25rem;
+    }
+
     .tag-label {
         font-size: 0.75rem;
         color: var(--cds-text-secondary, #525252);
+    }
+
+    .tag-manage {
+        all: unset;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1rem;
+        height: 1rem;
+        border-radius: 2px;
+        color: var(--cds-text-helper, #6f6f6f);
+        cursor: pointer;
+    }
+
+    .tag-manage:hover {
+        background: var(--cds-hover-ui, #e5e5e5);
+        color: var(--cds-text-primary, #161616);
     }
 
     .tag-input-container {
@@ -161,16 +227,16 @@
 
     .suggestions-dropdown {
         position: absolute;
-        bottom: 100%;
+        top: 100%;
         left: 0;
         right: 0;
         background: var(--cds-ui-01, #ffffff);
         border: 1px solid var(--cds-ui-03, #e0e0e0);
-        box-shadow: 0 -4px 8px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         z-index: 1000;
         max-height: 200px;
         overflow-y: auto;
-        margin-bottom: 2px;
+        margin-top: 2px;
     }
 
     .suggestion-item {

@@ -5,6 +5,9 @@ import type { SyncConfig, SyncResult } from './types';
 import { extractSnapshot } from '$lib/db/mappers/extract';
 import { snapshotToFolderJsonFiles } from '$lib/db/mappers/serialize-json';
 import { importFromFolder } from '$lib/db/mappers/import-file';
+// Shared with the settings UI so "a usable remote" means one thing, not two:
+// the UI must not offer a Git configuration this engine will refuse.
+import { isSupportedRemoteUrl } from '$lib/app-config/git-configs';
 import * as m from '$lib/paraglide/messages.js';
 
 export class SyncEngine {
@@ -145,7 +148,7 @@ export class SyncEngine {
         if (!config.access_token.trim()) {
             throw new Error(m.sync_token_required());
         }
-        if (!isGitHubHttpsUrl(config.remote_url)) {
+        if (!isSupportedRemoteUrl(config.remote_url)) {
             throw new Error(m.sync_invalid_remote_url());
         }
         if (!config.branch.trim()) {
@@ -266,20 +269,6 @@ export class SyncEngine {
         values: Omit<SyncResult, 'status' | 'timestamp'>,
     ): SyncResult {
         return { status, timestamp: new Date().toISOString(), ...values };
-    }
-}
-
-function isGitHubHttpsUrl(value: string): boolean {
-    try {
-        const url = new URL(value);
-        const pathParts = url.pathname.split('/').filter(Boolean);
-        return (
-            url.protocol === 'https:' &&
-            url.hostname === 'github.com' &&
-            pathParts.length >= 2
-        );
-    } catch {
-        return false;
     }
 }
 

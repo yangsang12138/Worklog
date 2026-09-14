@@ -156,13 +156,21 @@ export async function updateBoardTabs(
 }
 
 // ── Kanban column configuration ───────────────────────────────────────────
-// Column membership, names, remarks and view state are stored per board as a
-// JSON array. `columns_config === ''` means "never customised" and resolves to
-// the four built-in columns.
+// Column membership, names, remarks, accents and order are stored per board as
+// a JSON array. `columns_config === ''` means "never customised" and resolves
+// to the four built-in columns.
+//
+// This field is *synced* (it travels in the workspace snapshot), so it holds
+// only what the team shares. `collapsed` / `hidden` / `widthShare` are the
+// viewing user's own layout: they are stripped on write and kept in the
+// per-board view-state store instead.
 
 /**
  * Parse the `columns_config` JSON column safely.
  * Falls back to the built-in default columns when empty or malformed.
+ *
+ * View state from a legacy stored config is still read (see
+ * `parseBoardColumns`), so an unmigrated board keeps its layout.
  */
 export function parseColumns(raw: string | null | undefined): KanbanColumnConfig[] {
     return parseBoardColumns(raw, TICKET_STATUS_ORDER);
@@ -177,7 +185,12 @@ export async function getBoardColumns(
     return parseColumns(board?.columns_config);
 }
 
-/** Persist a board's column configuration. */
+/**
+ * Persist a board's column configuration.
+ *
+ * The list is serialised domain-only: view state passed in is ignored here and
+ * belongs to the local view-state store.
+ */
 export async function updateBoardColumns(
     db: Database,
     id: string,

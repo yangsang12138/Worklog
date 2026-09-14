@@ -1,5 +1,6 @@
 import type { Board, CreateBoardInput } from '$lib/components/app/types';
 import { getDb, BoardRepo } from '$lib/db';
+import { clearColumnViewState } from '$lib/hooks/board-view-state';
 
 let _boards = $state<Board[]>([]);
 let _archivedBoards = $state<Board[]>([]);
@@ -85,6 +86,8 @@ export function getBoards(getWorkspacePath: () => string | null) {
         const workspacePath = requireWorkspacePath();
         const db = await getDb(workspacePath);
         await BoardRepo.deleteBoard(db, id);
+        // The board's local layout has no meaning once the board is gone.
+        clearColumnViewState(id);
         _boards = _boards.filter(b => b.id !== id);
         _archivedBoards = _archivedBoards.filter(b => b.id !== id);
         // If deleted board was active, fall back to first remaining

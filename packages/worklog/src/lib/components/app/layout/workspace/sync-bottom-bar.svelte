@@ -224,6 +224,7 @@
         primaryButtonText={m.sync_force_push_confirm_action()}
         secondaryButtonText={m.settings_dismiss()}
         on:click:button--primary={() => void confirmForcePush()}
+        on:click:button--secondary={() => (forcePushOpen = false)}
     >
         <p>{m.sync_force_push_confirm_message()}</p>
     </Modal>

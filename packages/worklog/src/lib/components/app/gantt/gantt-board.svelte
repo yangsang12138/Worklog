@@ -16,7 +16,7 @@
     import TicketAddEditModal from "../kanban/ticket-add-edit-modal.svelte";
     import TicketDeleteConfirm from "../kanban/ticket-delete-confirm.svelte";
     import TicketPreviewSheet from "../kanban/ticket-preview-sheet.svelte";
-    import { getDb, SettingsRepo } from "$lib/db";
+    import { resolveAuthorName } from "$lib/app-config/app-config.svelte";
     import * as m from "$lib/paraglide/messages.js";
 
     let { searchQuery = "" }: { searchQuery?: string } = $props();
@@ -153,15 +153,8 @@
         const workspacePath = shell.workspace.path;
         if (!workspacePath) return;
 
-        // Resolve the author name from settings; fall back to "Anonymous"
-        let author = "Anonymous";
-        try {
-            const db = await getDb(workspacePath);
-            const settings = await SettingsRepo.getSettings(db);
-            author = settings.author_name?.trim() || "Anonymous";
-        } catch {
-            // Silently use fallback
-        }
+        // The author is app-level ("who is operating"), never workspace-level.
+        const author = await resolveAuthorName();
 
         const comment: Comment = {
             author,

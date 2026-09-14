@@ -4,13 +4,14 @@
         TextInput,
         TextArea,
         Dropdown,
-        DatePicker,
-        DatePickerInput,
         ContentSwitcher,
         Switch,
     } from "carbon-components-svelte";
     import TagManager from "../common/tag-manager.svelte";
     import MarkdownViewer from "../common/markdown-viewer.svelte";
+    import ScheduleField from "../common/schedule-field.svelte";
+    import OptionCatalogModal from "../common/option-catalog-modal.svelte";
+    import MarkdownInsertModal from "../common/markdown-insert-modal.svelte";
     import { untrack } from "svelte";
     import {
         TextBold,
@@ -21,17 +22,18 @@
         Code,
         Terminal,
         Link as LinkIcon,
+        Table as TableIcon,
         Help,
+        SettingsAdjust,
     } from "carbon-icons-svelte";
 
+    import { type Ticket, type TicketStatus, type TicketPriority } from "$lib/components/app/types";
     import {
-        type Ticket,
-        type TicketStatus,
-        type TicketPriority,
-        type TicketType,
-        TICKET_TYPE_CONFIG,
-        TICKET_TYPE_OPTIONS,
-    } from "$lib/components/app/types";
+        defaultPriorityId,
+        pickablePriorities,
+        priorityOptions,
+    } from "$lib/components/app/priority-registry.svelte";
+    import type { MarkdownInsertKind } from "$lib/utils/markdown-insert";
 
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import * as m from "$lib/paraglide/messages.js";
@@ -58,7 +60,8 @@
         }) => Promise<void>;
     } = $props();
 
-    const { ticketTypesApi } = getWorkspaceShellContext();
+    const { ticketTypesApi, ticketPrioritiesApi, tagsApi } =
+        getWorkspaceShellContext();
 
     const isEditing = $derived(!!ticket);
 
@@ -68,6 +71,31 @@
     let showCheatsheet = $state(false);
     let textareaRef = $state<HTMLTextAreaElement | null>(null);
 
+    // ── Attribute catalogs ──────────────────────────────────────────────────
+    let catalogKind = $state<"priority" | "type" | "tag">("priority");
+    let catalogOpen = $state(false);
+
+    function openCatalog(kind: "priority" | "type" | "tag") {
+        catalogKind = kind;
+        catalogOpen = true;
+    }
+
+    /** Priority items, falling back to the built-ins before the catalog loads. */
+    const priorityItems = $derived.by(() => {
+        const options = pickablePriorities();
+        if (options.length > 0) {
+            return options.map((priority) => ({
+                id: priority.id,
+                text: priority.name,
+            }));
+        }
+        return [
+            { id: "p3", text: m.modal_priority_low() },
+            { id: "p2", text: m.modal_priority_medium() },
+            { id: "p1", text: m.modal_priority_high() },
+        ];
+    });
+
     // Auto-reset cheatsheet when closing or switching mode
     $effect(() => {
         if (!open || descriptionMode !== 0) {
@@ -75,17 +103,68 @@
         }
     });
 
-    function applyFormatting(
-        formatType:
-            | "bold"
-            | "italic"
-            | "heading"
-            | "bullet"
-            | "number"
-            | "code"
-            | "codeblock"
-            | "link",
-    ) {
+    // ── Markdown authoring ──────────────────────────────────────────────────
+
+    let insertKind = $state<MarkdownInsertKind>("link");
+    let insertOpen = $state(false);
+    let insertSelection = $state("");
+    /** The editor range the dialog was opened for, so the text lands there. */
+    let insertRange = $state({ start: 0, end: 0 });
+
+    /**
+     * Open the dialog that builds a Markdown construct.
+     *
+     * The editor range is captured now, because focus moves into the dialog and
+     * the selection would otherwise be gone by the time the text is ready.
+     */
+    function openInsert(kind: MarkdownInsertKind) {
+        const ref = textareaRef;
+        const start = ref ? ref.selectionStart : form.description.length;
+        const end = ref ? ref.selectionEnd : form.description.length;
+
+        insertRange = { start, end };
+        insertSelection = form.description.slice(start, end);
+        insertKind = kind;
+        insertOpen = true;
+    }
+
+    /**
+     * Write a finished Markdown fragment back into the description.
+     *
+     * A block construct is nudged onto its own line: a list glued to the end of
+     * a paragraph is not a list, and a table glued to text is not a table.
+     */
+    function handleInsert(markdown: string, block: boolean) {
+        const text = form.description;
+        const { start, end } = insertRange;
+
+        let prefix = "";
+        let suffix = "";
+
+        if (block) {
+            if (start > 0 && text[start - 1] !== "\n") prefix = "\n";
+            const after = text.slice(end);
+            suffix = !after ? "\n" : after.startsWith("\n") ? "" : "\n";
+        }
+
+        form.description = text.slice(0, start) + prefix + markdown + suffix + text.slice(end);
+
+        const caret = start + prefix.length + markdown.length + suffix.length;
+        setTimeout(() => {
+            const ref = textareaRef;
+            if (!ref) return;
+            ref.focus();
+            ref.setSelectionRange(caret, caret);
+        }, 0);
+    }
+
+    /**
+     * One-token formatting, applied straight to the selection.
+     *
+     * Constructs that need the user to supply content (link, code, list, table)
+     * go through the dialog instead.
+     */
+    function applyInlineFormatting(formatType: "bold" | "italic" | "heading") {
         if (!textareaRef) return;
 
         const start = textareaRef.selectionStart;
@@ -94,118 +173,42 @@
         const selected = text.slice(start, end);
 
         let replacement = "";
-        let newCursorPos = start;
-        const boldText = m.markdown_placeholder_bold_text();
-        const italicText = m.markdown_placeholder_italic_text();
-        const headingText = m.markdown_toolbar_heading();
-        const itemText = m.markdown_placeholder_item();
-        const codeText = m.markdown_placeholder_code();
-        const linkText = m.markdown_placeholder_link_text();
+        let selectStart = start;
+        let selectEnd = start;
 
         switch (formatType) {
-            case "bold":
+            case "bold": {
+                const boldText = m.markdown_placeholder_bold_text();
                 replacement = `**${selected || boldText}**`;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + 2;
+                selectStart = start + 2;
+                selectEnd = selectStart + (selected ? selected.length : boldText.length);
                 break;
-            case "italic":
+            }
+            case "italic": {
+                const italicText = m.markdown_placeholder_italic_text();
                 replacement = `*${selected || italicText}*`;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + 1;
+                selectStart = start + 1;
+                selectEnd = selectStart + (selected ? selected.length : italicText.length);
                 break;
-            case "heading":
-                // Insert a new line if we are not at start of line
+            }
+            case "heading": {
+                const headingText = m.markdown_toolbar_heading();
                 const needsNewLine = start > 0 && text[start - 1] !== "\n";
                 replacement = `${needsNewLine ? "\n" : ""}### ${selected || headingText}`;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + replacement.length;
+                selectStart = start + replacement.indexOf("###") + 4;
+                selectEnd = selectStart + (selected ? selected.length : headingText.length);
                 break;
-            case "bullet":
-                const needsNLBullet = start > 0 && text[start - 1] !== "\n";
-                replacement = `${needsNLBullet ? "\n" : ""}- ${selected || itemText}`;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + replacement.length;
-                break;
-            case "number":
-                const needsNLNum = start > 0 && text[start - 1] !== "\n";
-                replacement = `${needsNLNum ? "\n" : ""}1. ${selected || itemText}`;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + replacement.length;
-                break;
-            case "code":
-                replacement = `\`${selected || codeText}\``;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + 1;
-                break;
-            case "codeblock":
-                const needsNLCode = start > 0 && text[start - 1] !== "\n";
-                replacement = `${needsNLCode ? "\n" : ""}\`\`\`\n${selected || codeText}\n\`\`\`\n`;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + (needsNLCode ? 5 : 4);
-                break;
-            case "link":
-                replacement = `[${selected || linkText}](https://example.com)`;
-                newCursorPos = selected
-                    ? start + replacement.length
-                    : start + 1;
-                break;
+            }
         }
 
         form.description = text.slice(0, start) + replacement + text.slice(end);
 
-        // Wait for DOM update, then restore focus and selection
+        // Wait for DOM update, then focus the placeholder text
         setTimeout(() => {
-            if (!textareaRef) return;
-            textareaRef.focus();
-            if (selected) {
-                // Keep cursor at end of replacement
-                textareaRef.setSelectionRange(
-                    start + replacement.length,
-                    start + replacement.length,
-                );
-            } else {
-                // Focus the placeholder text
-                if (formatType === "bold") {
-                    textareaRef.setSelectionRange(start + 2, start + 2 + boldText.length);
-                } else if (formatType === "italic") {
-                    textareaRef.setSelectionRange(start + 1, start + 1 + italicText.length);
-                } else if (formatType === "heading") {
-                    const offset = replacement.indexOf("###") + 4;
-                    textareaRef.setSelectionRange(
-                        start + offset,
-                        start + offset + headingText.length,
-                    );
-                } else if (formatType === "bullet") {
-                    const offset = replacement.indexOf("- ") + 2;
-                    textareaRef.setSelectionRange(
-                        start + offset,
-                        start + offset + itemText.length,
-                    );
-                } else if (formatType === "number") {
-                    const offset = replacement.indexOf("1. ") + 3;
-                    textareaRef.setSelectionRange(
-                        start + offset,
-                        start + offset + itemText.length,
-                    );
-                } else if (formatType === "code") {
-                    textareaRef.setSelectionRange(start + 1, start + 1 + codeText.length);
-                } else if (formatType === "codeblock") {
-                    const offset = replacement.indexOf("```\n") + 4;
-                    textareaRef.setSelectionRange(
-                        start + offset,
-                        start + offset + codeText.length,
-                    );
-                } else if (formatType === "link") {
-                    textareaRef.setSelectionRange(start + 1, start + 1 + linkText.length);
-                }
-            }
+            const ref = textareaRef;
+            if (!ref) return;
+            ref.focus();
+            ref.setSelectionRange(selectStart, selectEnd);
         }, 0);
     }
 
@@ -222,13 +225,13 @@
         if (e.ctrlKey || e.metaKey) {
             if (e.key.toLowerCase() === "b") {
                 e.preventDefault();
-                applyFormatting("bold");
+                applyInlineFormatting("bold");
             } else if (e.key.toLowerCase() === "i") {
                 e.preventDefault();
-                applyFormatting("italic");
+                applyInlineFormatting("italic");
             } else if (e.key.toLowerCase() === "k") {
                 e.preventDefault();
-                applyFormatting("link");
+                openInsert("link");
             }
         }
 
@@ -320,21 +323,6 @@
         return initialForm !== getFormSnapshot();
     }
 
-    const TAG_OPTIONS = [
-        "frontend",
-        "backend",
-        "design",
-        "docs",
-        "devops",
-        "auth",
-        "api",
-        "native",
-        "tauri",
-        "svelte",
-        "setup",
-        "blocked",
-    ];
-
     // Reset form when modal opens
     $effect(() => {
         if (open) {
@@ -353,12 +341,12 @@
                     };
                 } else {
                     const defaultType =
-                        ticketTypesApi.types.find((t) => t.is_default) ||
-                        ticketTypesApi.types[0];
+                        ticketTypesApi.activeTypes.find((t) => t.is_default) ||
+                        ticketTypesApi.activeTypes[0];
                     form = {
                         title: "",
                         description: "",
-                        priority: "p2",
+                        priority: defaultPriorityId(),
                         ticketType: defaultType?.id || "feature",
                         startDate: "",
                         dueDate: "",
@@ -408,6 +396,16 @@
         showExitConfirm = false;
         open = false;
     }
+
+    /**
+     * Keep Escape inside an open sub-dialog.
+     *
+     * The dialog handles Escape itself; without this the same key press keeps
+     * bubbling to the ticket modal and closes the whole form with it.
+     */
+    function guardSubDialogKeys(event: KeyboardEvent) {
+        if (event.key === "Escape") event.stopPropagation();
+    }
 </script>
 
 <Modal
@@ -446,6 +444,84 @@
                     if (e.key === "Enter") e.stopPropagation();
                 }}
             />
+
+            <!--
+                Attributes sit directly under the title. Their dropdown menus
+                open downward, so keeping them at the top of the dialog means a
+                menu always has room inside it instead of spilling past the
+                modal edge.
+            -->
+            <div class="attributes-strip">
+                <div class="attr-field attr-field--priority">
+                    <div class="attr-label-row">
+                        <span class="cds--label">{m.modal_priority()}</span>
+                        <button
+                            type="button"
+                            class="attr-manage"
+                            title={m.catalog_title_priority()}
+                            aria-label={m.catalog_title_priority()}
+                            onclick={() => openCatalog("priority")}
+                        >
+                            <SettingsAdjust size={12} />
+                        </button>
+                    </div>
+                    <Dropdown
+                        size="sm"
+                        hideLabel
+                        aria-label={m.modal_priority()}
+                        bind:selectedId={form.priority}
+                        items={priorityItems}
+                    />
+                </div>
+
+                <div class="attr-field attr-field--type">
+                    <div class="attr-label-row">
+                        <span class="cds--label">{m.modal_type()}</span>
+                        <button
+                            type="button"
+                            class="attr-manage"
+                            title={m.catalog_title_type()}
+                            aria-label={m.catalog_title_type()}
+                            onclick={() => openCatalog("type")}
+                        >
+                            <SettingsAdjust size={12} />
+                        </button>
+                    </div>
+                    <Dropdown
+                        size="sm"
+                        hideLabel
+                        aria-label={m.modal_type()}
+                        bind:selectedId={form.ticketType}
+                        items={ticketTypesApi.activeTypes.map((t) => ({
+                            id: t.id,
+                            text: t.name,
+                        }))}
+                    />
+                </div>
+
+                <div class="attr-field attr-field--tags">
+                    <TagManager
+                        label={m.modal_tags()}
+                        availableTags={tagsApi.activeTags.map((t) => t.name)}
+                        bind:selectedTags={form.tags}
+                        onManage={() => openCatalog("tag")}
+                        onCreateTag={(name) => void tagsApi.create({ name })}
+                    />
+                </div>
+            </div>
+
+            <!--
+                The interval gets a row of its own: a ticket's start and due are
+                one answer ("when does this happen"), so they read as a single
+                result rather than two fields competing for space with the tags.
+            -->
+            <div class="schedule-row">
+                <ScheduleField
+                    bind:start={form.startDate}
+                    bind:due={form.dueDate}
+                />
+            </div>
+
             <div class="description-section">
                 <div class="description-header">
                     <span class="cds--label">{m.modal_description_label()}</span
@@ -466,7 +542,8 @@
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("bold")}
+                                    onclick={() =>
+                                        applyInlineFormatting("bold")}
                                     title={m.markdown_toolbar_bold()}
                                 >
                                     <TextBold size={16} />
@@ -474,7 +551,8 @@
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("italic")}
+                                    onclick={() =>
+                                        applyInlineFormatting("italic")}
                                     title={m.markdown_toolbar_italic()}
                                 >
                                     <TextItalic size={16} />
@@ -482,7 +560,8 @@
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("heading")}
+                                    onclick={() =>
+                                        applyInlineFormatting("heading")}
                                     title={m.markdown_toolbar_heading()}
                                 >
                                     <HeadingIcon size={16} />
@@ -491,7 +570,7 @@
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("bullet")}
+                                    onclick={() => openInsert("bullet")}
                                     title={m.markdown_toolbar_unordered_list()}
                                 >
                                     <List size={16} />
@@ -499,16 +578,24 @@
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("number")}
+                                    onclick={() => openInsert("number")}
                                     title={m.markdown_toolbar_ordered_list()}
                                 >
                                     <ListNumbered size={16} />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="toolbar-btn"
+                                    onclick={() => openInsert("table")}
+                                    title={m.markdown_toolbar_table()}
+                                >
+                                    <TableIcon size={16} />
                                 </button>
                                 <span class="toolbar-divider"></span>
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("code")}
+                                    onclick={() => openInsert("code")}
                                     title={m.markdown_toolbar_inline_code()}
                                 >
                                     <Code size={16} />
@@ -516,7 +603,7 @@
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("codeblock")}
+                                    onclick={() => openInsert("codeblock")}
                                     title={m.markdown_toolbar_code_block()}
                                 >
                                     <Terminal size={16} />
@@ -524,7 +611,7 @@
                                 <button
                                     type="button"
                                     class="toolbar-btn"
-                                    onclick={() => applyFormatting("link")}
+                                    onclick={() => openInsert("link")}
                                     title={m.markdown_toolbar_insert_link()}
                                 >
                                     <LinkIcon size={16} />
@@ -584,6 +671,9 @@
                                     <div class="cheatsheet-item">
                                         <code>{m.markdown_example_code_block()}</code> &rarr; {m.markdown_toolbar_code_block()}
                                     </div>
+                                    <div class="cheatsheet-item">
+                                        <code>{m.markdown_example_table()}</code> &rarr; {m.markdown_cheatsheet_table()}
+                                    </div>
                                 </div>
                             </div>
                         {/if}
@@ -603,71 +693,25 @@
                 </div>
             </div>
         </div>
-
-        <div class="attributes-strip">
-            <div class="attr-field">
-                <Dropdown
-                    labelText={m.modal_priority()}
-                    size="sm"
-                    bind:selectedId={form.priority}
-                    items={[
-                        { id: "p3", text: m.modal_priority_low() },
-                        { id: "p2", text: m.modal_priority_medium() },
-                        { id: "p1", text: m.modal_priority_high() },
-                    ]}
-                />
-            </div>
-            <div class="attr-field attr-field--grow">
-                <Dropdown
-                    labelText={m.modal_type()}
-                    size="sm"
-                    bind:selectedId={form.ticketType}
-                    items={ticketTypesApi.types.map((t) => ({
-                        id: t.id,
-                        text: t.name,
-                    }))}
-                />
-            </div>
-            <div class="attr-field">
-                {#key open}
-                    <DatePicker
-                        bind:value={form.startDate}
-                        datePickerType="single"
-                        dateFormat="Y-m-d"
-                    >
-                        <DatePickerInput
-                            labelText={m.modal_start_date()}
-                            placeholder="yyyy-mm-dd"
-                            size="sm"
-                        />
-                    </DatePicker>
-                {/key}
-            </div>
-            <div class="attr-field">
-                {#key open}
-                    <DatePicker
-                        bind:value={form.dueDate}
-                        datePickerType="single"
-                        dateFormat="Y-m-d"
-                    >
-                        <DatePickerInput
-                            labelText={m.modal_due_date()}
-                            placeholder="yyyy-mm-dd"
-                            size="sm"
-                        />
-                    </DatePicker>
-                {/key}
-            </div>
-            <div class="attr-field attr-field--tags">
-                <TagManager
-                    label={m.modal_tags()}
-                    availableTags={TAG_OPTIONS}
-                    bind:selectedTags={form.tags}
-                />
-            </div>
-        </div>
     </div>
 </Modal>
+
+<!--
+    Sub-dialogs live inside this wrapper so their key presses stop here: each
+    one handles its own Escape, and the ticket modal must not treat the same
+    press as "close the form".
+-->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="sub-dialogs" onkeydown={guardSubDialogKeys}>
+    <OptionCatalogModal bind:open={catalogOpen} kind={catalogKind} />
+
+    <MarkdownInsertModal
+        bind:open={insertOpen}
+        kind={insertKind}
+        selection={insertSelection}
+        onInsert={handleInsert}
+    />
+</div>
 
 <Modal
     danger
@@ -701,8 +745,8 @@
         align-items: flex-end;
         gap: 0.5rem;
         flex-wrap: wrap;
-        padding-top: 0.75rem;
-        border-top: 1px solid var(--cds-ui-03);
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid var(--cds-ui-03);
     }
 
     .attr-field {
@@ -712,8 +756,12 @@
         flex-shrink: 0;
     }
 
-    .attr-field--grow {
-        min-width: 9rem;
+    .attr-field--priority {
+        min-width: 6.5rem;
+    }
+
+    .attr-field--type {
+        min-width: 8rem;
         flex: 1;
     }
 
@@ -722,21 +770,46 @@
         min-width: 12rem;
     }
 
+    .schedule-row {
+        display: flex;
+        width: 100%;
+    }
+
+    .attr-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.25rem;
+    }
+
+    .attr-label-row :global(.cds--label) {
+        margin-bottom: 0.25rem;
+        font-size: 0.75rem;
+        color: var(--cds-text-secondary, #525252);
+        white-space: nowrap;
+    }
+
+    /* Entry point into the priority / type / tag catalogs. */
+    .attr-manage {
+        all: unset;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1rem;
+        height: 1rem;
+        margin-bottom: 0.25rem;
+        border-radius: 2px;
+        color: var(--cds-text-helper, #6f6f6f);
+        cursor: pointer;
+    }
+
+    .attr-manage:hover {
+        background: var(--cds-hover-ui, #e5e5e5);
+        color: var(--cds-text-primary, #161616);
+    }
+
     /* Force sm Dropdown to not grow full width */
     .attr-field :global(.bx--dropdown) {
-        width: 100%;
-    }
-
-    /* Align DatePicker to strip — prevent it from overflowing */
-    .attr-field :global(.bx--date-picker) {
-        width: 100%;
-    }
-
-    .attr-field :global(.bx--date-picker-input__wrapper) {
-        width: 100%;
-    }
-
-    .attr-field :global(.bx--date-picker--single .bx--date-picker__input) {
         width: 100%;
     }
 

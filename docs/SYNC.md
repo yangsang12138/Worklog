@@ -68,12 +68,21 @@ The mapper module (`src/lib/db/mappers/`) is the core of this system:
 worklog_export/
 ├── metadata.json        # export version, timestamp
 ├── workspace.json       # workspace name, schema version, sync mode
-├── settings.json        # author, default branch, autosave config
+├── catalogs.json        # ticket types, priority levels, tags
 └── boards/
     ├── BRD-abc123.json  # { board: {...}, tickets: [...] }
     ├── BRD-def456.json
     └── ...
 ```
+
+> `catalogs.json` carries the definitions a ticket's ids resolve against
+> (`ticket_type`, `priority`, `labels`). Without it a pulled or restored workspace
+> shows raw ids where the author saw a name — the reason it joined the snapshot in
+> format version 2.
+
+> There is deliberately **no `settings.json`**. Older exports contain one holding
+> the author name, default branch and autosave interval; it is ignored on import.
+> Identity is an application-level value that never travels with a workspace.
 
 ### Folder Structure (CSV)
 
@@ -81,12 +90,15 @@ worklog_export/
 worklog_export/
 ├── metadata.json        # always JSON (too small for CSV)
 ├── workspace.json       # always JSON
-├── settings.json        # always JSON
+├── catalogs.json        # always JSON — catalog rows are not ticket-shaped
 └── boards/
     ├── BRD-abc123.json  # board metadata (name, description, dates)
     ├── BRD-abc123.csv   # tickets as CSV rows
     └── ...
 ```
+
+> A *single-file* CSV export carries tickets only: CSV has nowhere to put the
+> catalogs, so a complete round-trip needs JSON or folder mode.
 
 ### CSV Column Spec
 
@@ -134,11 +146,14 @@ The sync directory lives inside the workspace:
     ├── .git/
     ├── metadata.json    # { schema_version, sync_version, last_synced_at }
     ├── workspace.json
-    ├── settings.json
     └── boards/
         ├── BRD-abc123.json
         └── ...
 ```
+
+The synced folder contains **workspace data only**. Identity and the access
+token are app-level (`$lib/app-config`), stored outside the workspace, so they
+are never committed to the sync repository — or to the workspace's own repo.
 
 ### Authentication
 
@@ -146,7 +161,8 @@ Sync uses a **GitHub Personal Access Token (PAT)** with `repo` scope:
 
 - No SSH keys to manage
 - No OAuth flow to implement
-- Token stored locally via `tauri-plugin-store` (encrypted per-app storage)
+- Token stored locally at the application level, **not** in the workspace
+  database, and *not* in an encrypted store (see Security below)
 - Used for HTTPS git operations: `https://<token>@github.com/<owner>/<repo>.git`
 
 #### Creating a PAT
@@ -154,7 +170,7 @@ Sync uses a **GitHub Personal Access Token (PAT)** with `repo` scope:
 1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
 2. Create a token with **Repository access** → select your sync repo
 3. Grant **Contents: Read and write** permission
-4. Copy the token into Worklog's Settings → Sync → Access Token field
+4. Copy the token into Worklog's Settings → General → Identity & Credentials → Access Token field
 
 ### Push Flow
 
@@ -185,21 +201,34 @@ If both local and remote have diverged:
 
 ### Sync Configuration
 
-Stored in the `sync_config` database table:
+Split across two owners — the team's contract in the workspace, the person's
+identity and secret in the app config:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `remote_url` | TEXT | GitHub repository HTTPS URL |
-| `access_token` | TEXT | GitHub PAT |
-| `branch` | TEXT | Branch to sync (default: `main`) |
-| `auto_sync` | BOOLEAN | Push automatically on save |
-| `last_synced_at` | TEXT | ISO timestamp of last successful sync |
+| Field | Owner | Description |
+|-------|-------|-------------|
+| `remote_url` | workspace (`sync_config` table) | GitHub repository HTTPS URL |
+| `branch` | workspace (`sync_config` table) | Branch to sync (default: `main`) |
+| `auto_sync` | workspace (`sync_config` table) | Push automatically on save |
+| `auto_sync_interval` | workspace (`sync_config` table) | Minutes between automatic syncs |
+| `last_synced_at` | workspace (`sync_config` table) | ISO timestamp of last successful sync |
+| `access_token` | **app config** | GitHub PAT |
+| `git_name`, `git_email` | **app config** | Commit identity for sync commits |
+
+The branch and the remote are workspace-scoped on purpose: they are a contract
+the team shares, so two machines cannot disagree about which line of history
+they are on. The token and the commit identity are the person's, so they must
+not be shared — and must not sit in a database that lives inside a git-tracked
+folder.
 
 ---
 
 ## Security
 
-- **Tokens are stored locally** in the Tauri app's encrypted store. They never leave the machine except when authenticating with GitHub.
+- **Tokens are stored locally at the application level**, outside the workspace
+  folder, and are never written into `worklog.db` or into an export.
+  **They are not encrypted**: the app config is a plain JSON file managed by
+  `tauri-plugin-store`. Moving credentials into an OS keychain is the intended
+  next step; until then, treat that file as a secret.
 - **The `.worklog/sync/` directory should be gitignored** from the workspace's own git repo (if any) to avoid nesting repos.
 - **The PAT should have minimal scope** — only `Contents: Read and write` on the specific sync repository.
 - **No data is sent to any server other than the configured GitHub remote.**

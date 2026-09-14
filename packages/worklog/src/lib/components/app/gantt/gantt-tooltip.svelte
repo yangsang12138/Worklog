@@ -2,7 +2,7 @@
     import { Tag } from "carbon-components-svelte";
     import { Calendar } from "carbon-icons-svelte";
     import { getGanttState } from "./gantt-state.svelte";
-    import { TICKET_PRIORITY_CONFIG } from "$lib/components/app/types";
+    import { priorityColor, priorityLabel } from "$lib/components/app/priority-registry.svelte";
     import { columnTitle } from "$lib/components/app/column-registry.svelte";
 
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
@@ -42,16 +42,12 @@
         <div class="tip-row">
             <span class="tip-label">{m.modal_priority()}</span>
             <Tag
-                type={TICKET_PRIORITY_CONFIG[
-                    state.hoveredTicket
-                        .priority as keyof typeof TICKET_PRIORITY_CONFIG
-                ]?.tagColor || "blue"}
+                style="background-color: {priorityColor(
+                    state.hoveredTicket.priority,
+                )}; color: white;"
                 size="sm"
             >
-                {TICKET_PRIORITY_CONFIG[
-                    state.hoveredTicket
-                        .priority as keyof typeof TICKET_PRIORITY_CONFIG
-                ]?.label}
+                {priorityLabel(state.hoveredTicket.priority)}
             </Tag>
         </div>
         <div class="tip-row">

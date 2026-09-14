@@ -22,15 +22,18 @@ import { ensurePushSchema } from '../src/lib/db/ensure-push-schema.ts';
 import {
     MAX_WIDTH_SHARE,
     addCustomColumn,
+    applyViewState,
     canRemoveColumn,
     clampShare,
     columnWeight,
     computeShares,
     defaultColumns,
+    extractViewState,
     findColumn,
     hasOverrides,
     hiddenColumns,
     isBuiltinColumn,
+    legacyViewStateFromStored,
     moveColumn,
     normalizeColumns,
     parseBoardColumns,
@@ -185,7 +188,7 @@ test('the four default columns are built-in and never removable', () => {
     assert.equal(canRemoveColumn(renamed, 'todo', 0), false);
 });
 
-test('serialize/parse round-trips a config', () => {
+test('serialize/parse round-trips the domain half of a config', () => {
     const columns = parseBoardColumns(
         JSON.stringify([
             { status: 'backlog', title: 'Ideas', note: 'not started', collapsed: true },
@@ -194,7 +197,85 @@ test('serialize/parse round-trips a config', () => {
         ORDER,
     );
 
-    assert.deepEqual(parseBoardColumns(serializeBoardColumns(columns), ORDER), columns);
+    // `columns_config` is a *synced* field, so the stored form carries only
+    // what the team shares: view state is stripped on write (it lives in the
+    // per-board local store) and comes back at its defaults.
+    const stored = parseBoardColumns(serializeBoardColumns(columns), ORDER);
+
+    assert.deepEqual(
+        stored.map(({ status, kind, title, note, accentColor }) => ({
+            status,
+            kind,
+            title,
+            note,
+            accentColor,
+        })),
+        columns.map(({ status, kind, title, note, accentColor }) => ({
+            status,
+            kind,
+            title,
+            note,
+            accentColor,
+        })),
+    );
+
+    assert.ok(
+        stored.every((c) => !c.collapsed && !c.hidden && c.widthShare === null),
+        'view state must not be persisted into the synced column config',
+    );
+});
+
+test('view state is extracted only when it differs from the default', () => {
+    let columns = defaultColumns(ORDER);
+    assert.deepEqual(extractViewState(columns), {}, 'a default board stores nothing');
+
+    columns = patchColumn(columns, 'todo', { collapsed: true, widthShare: 3 });
+    columns = patchColumn(columns, 'done', { hidden: true });
+
+    assert.deepEqual(extractViewState(columns), {
+        todo: { collapsed: true, widthShare: 3 },
+        done: { hidden: true },
+    });
+});
+
+test('view state reapplies onto the stored domain config', () => {
+    const columns = defaultColumns(ORDER);
+    const restored = applyViewState(columns, {
+        todo: { collapsed: true, widthShare: 2 },
+        done: { hidden: true },
+    });
+
+    assert.equal(findColumn(restored, 'todo').collapsed, true);
+    assert.equal(findColumn(restored, 'todo').widthShare, 2);
+    assert.equal(findColumn(restored, 'done').hidden, true);
+    assert.equal(findColumn(restored, 'backlog').collapsed, false);
+});
+
+test('view state for a status the board no longer has is ignored', () => {
+    const restored = applyViewState(defaultColumns(ORDER), {
+        'CST-GONE01': { hidden: true },
+    });
+
+    assert.deepEqual(
+        restored.map((c) => c.status),
+        ORDER,
+        'a stale local layout cannot resurrect a deleted column',
+    );
+});
+
+test('a legacy stored config still yields its view state for migration', () => {
+    const raw = JSON.stringify([
+        { status: 'backlog', collapsed: true, widthShare: 2 },
+        { status: 'todo', hidden: true },
+        { status: 'done', collapsed: 'yes', widthShare: 'wide' },
+    ]);
+
+    assert.deepEqual(legacyViewStateFromStored(raw), {
+        backlog: { collapsed: true, widthShare: 2 },
+        todo: { hidden: true },
+    });
+    assert.deepEqual(legacyViewStateFromStored('not json'), {});
+    assert.deepEqual(legacyViewStateFromStored(''), {});
 });
 
 test('hidden and visible columns partition the config', () => {
@@ -437,7 +518,19 @@ test('a stored customisation survives a round-trip through the DB column', () =>
         .run(serializeBoardColumns(configured), now, now);
 
     const row = sqlite.prepare('SELECT columns_config FROM boards WHERE id = ?').get('BRD-3');
-    assert.deepEqual(parseBoardColumns(row.columns_config, ORDER), configured);
+    const stored = parseBoardColumns(row.columns_config, ORDER);
+
+    // The name and remark are workspace data — the team shares them.
+    assert.equal(findColumn(stored, 'backlog').title, 'Ideas');
+    assert.equal(findColumn(stored, 'backlog').note, 'someday');
+
+    // The layout is not: it belongs to the machine, so the DB round-trip drops
+    // it (the caller's local view-state store keeps it).
+    assert.equal(
+        findColumn(stored, 'done').hidden,
+        false,
+        'view state must not survive as workspace data',
+    );
 });
 
 // ── Self-healing guard ─────────────────────────────────────────────────────
@@ -506,7 +599,7 @@ test('a workspace stamped at the current version but missing columns_config is r
 
     // The write now succeeds and round-trips a real configuration.
     const configured = parseBoardColumns(
-        JSON.stringify([{ status: 'backlog', collapsed: true }, { status: 'done', hidden: true }]),
+        JSON.stringify([{ status: 'backlog', title: 'Ideas' }, { status: 'done', note: 'shipped' }]),
         ORDER,
     );
     updateColumns(sqlite, 'BRD-1', serializeBoardColumns(configured));
@@ -515,10 +608,25 @@ test('a workspace stamped at the current version but missing columns_config is r
     assert.equal(row.name, 'Board', 'existing board data is untouched');
     assert.deepEqual(parseBoardColumns(row.columns_config, ORDER), configured);
     assert.equal(
-        parseBoardColumns(row.columns_config, ORDER).find((c) => c.status === 'backlog')
-            .collapsed,
-        true,
-        'collapse survives the repaired write',
+        parseBoardColumns(row.columns_config, ORDER).find((c) => c.status === 'backlog').title,
+        'Ideas',
+        'the domain config survives the repaired write',
+    );
+
+    // Layout is deliberately *not* part of what gets stored here: this field is
+    // synced, so a repair write must not carry one user's column widths into
+    // everyone else's board.
+    const withLayout = patchColumn(configured, 'backlog', {
+        collapsed: true,
+        widthShare: 4,
+    });
+    updateColumns(sqlite, 'BRD-1', serializeBoardColumns(withLayout));
+
+    const refreshed = sqlite.prepare('SELECT * FROM boards WHERE id = ?').get('BRD-1');
+    assert.equal(
+        /collapsed|hidden|widthShare/.test(refreshed.columns_config),
+        false,
+        'view state must never reach the synced column config',
     );
 });
 
@@ -884,10 +992,24 @@ test('invalid stored weights are treated as unplanned', () => {
     assert.equal(columnWeight(findColumn(columns, 'backlog')), 1, 'defaults to 1');
 });
 
-test('a width plan survives storage, and can be reset', () => {
+test('a width plan is reset, and never stored in the synced config', () => {
     let columns = setWidthShare(defaultColumns(ORDER), 'in_progress', 3);
-    const stored = serializeBoardColumns(columns);
-    assert.deepEqual(parseBoardColumns(stored, ORDER), columns);
+
+    // The plan is view state: it round-trips through `extractViewState` /
+    // `applyViewState`, not through the synced `columns_config` string.
+    const viewState = extractViewState(columns);
+    assert.deepEqual(viewState, { in_progress: { widthShare: 3 } });
+
+    const stored = parseBoardColumns(serializeBoardColumns(columns), ORDER);
+    assert.ok(
+        stored.every((c) => c.widthShare === null),
+        'the stored config is unplanned even when the board is not',
+    );
+    assert.deepEqual(
+        applyViewState(stored, viewState),
+        columns,
+        'domain storage plus local view state reconstructs the board',
+    );
 
     columns = resetWidthShares(columns);
     assert.ok(columns.every((c) => c.widthShare === null));

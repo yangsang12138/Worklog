@@ -1,5 +1,62 @@
 import type { Board, Ticket } from '$lib/components/app/types';
-import type { WorklogSnapshot, BoardSnapshot } from './types';
+import type {
+    WorklogSnapshot,
+    BoardSnapshot,
+    CatalogSnapshot,
+} from './types';
+// Explicit extension: this module is imported directly by plain-Node tests, and
+// Node's ESM resolver does not guess extensions.
+import { emptyCatalogSnapshot } from './types.ts';
+
+/**
+ * Read the catalogs out of a file, tolerating the two shapes an export can have
+ * (a nested object, or the pre-v2 absence) and never trusting what is in it.
+ */
+function parseCatalogs(raw: unknown): CatalogSnapshot {
+    if (!raw || typeof raw !== 'object') return emptyCatalogSnapshot();
+    const source = raw as Partial<CatalogSnapshot>;
+
+    const list = <T,>(value: unknown, map: (row: Record<string, unknown>) => T | null) =>
+        (Array.isArray(value) ? value : [])
+            .map((row) => (row && typeof row === 'object' ? map(row as Record<string, unknown>) : null))
+            .filter((row): row is T => row !== null);
+
+    const str = (value: unknown) => (typeof value === 'string' ? value : '');
+
+    return {
+        types: list(source.types, (row) => {
+            const id = str(row.id);
+            const name = str(row.name);
+            if (!id || !name) return null;
+            return {
+                id,
+                name,
+                color: str(row.color),
+                icon: str(row.icon) || null,
+                is_default: row.is_default === true,
+            };
+        }),
+        priorities: list(source.priorities, (row) => {
+            const id = str(row.id);
+            const name = str(row.name);
+            if (!id || !name) return null;
+            const rank = Number(row.rank);
+            return {
+                id,
+                name,
+                color: str(row.color),
+                rank: Number.isFinite(rank) ? rank : 0,
+                is_default: row.is_default === true,
+            };
+        }),
+        tags: list(source.tags, (row) => {
+            const id = str(row.id);
+            const name = str(row.name);
+            if (!id || !name) return null;
+            return { id, name, color: str(row.color) };
+        }),
+    };
+}
 
 /**
  * Parses a single combined JSON string back into a WorklogSnapshot.
@@ -14,8 +71,8 @@ export function parseSnapshotFromSingleJson(content: string): WorklogSnapshot {
             export_version: data.export_version ?? data.version ?? 1,
             exported_at: data.exported_at ?? new Date().toISOString(),
             workspace_meta: data.workspace_meta ?? null,
-            app_settings: data.app_settings ?? null,
             boards: data.boards as BoardSnapshot[],
+            catalogs: parseCatalogs(data.catalogs),
         };
     }
 
@@ -33,8 +90,8 @@ export function parseSnapshotFromSingleJson(content: string): WorklogSnapshot {
             export_version: data.export_version ?? data.version ?? 1,
             exported_at: data.exported_at ?? new Date().toISOString(),
             workspace_meta: data.workspace_meta ?? null,
-            app_settings: data.app_settings ?? null,
             boards: boardSnapshots,
+            catalogs: parseCatalogs(data.catalogs),
         };
     }
 
@@ -43,8 +100,8 @@ export function parseSnapshotFromSingleJson(content: string): WorklogSnapshot {
         export_version: data.export_version ?? 1,
         exported_at: data.exported_at ?? new Date().toISOString(),
         workspace_meta: data.workspace_meta ?? null,
-        app_settings: data.app_settings ?? null,
         boards: [],
+        catalogs: parseCatalogs(data.catalogs),
     };
 }
 
@@ -55,11 +112,13 @@ export function parseSnapshotFromSingleJson(content: string): WorklogSnapshot {
 export function parseSnapshotFromFolder(files: Map<string, string>): WorklogSnapshot {
     const metadataRaw = files.get('metadata.json');
     const workspaceRaw = files.get('workspace.json');
-    const settingsRaw = files.get('settings.json');
+    const catalogsRaw = files.get('catalogs.json');
 
     const metadata = metadataRaw ? JSON.parse(metadataRaw) : {};
     const workspaceMeta = workspaceRaw ? JSON.parse(workspaceRaw) : null;
-    const appSettings = settingsRaw ? JSON.parse(settingsRaw) : null;
+
+    // `settings.json` from an older export is ignored on purpose: it held
+    // identity, which is app-level now and must not be restored from a file.
 
     const boardSnapshots: BoardSnapshot[] = [];
 
@@ -81,7 +140,7 @@ export function parseSnapshotFromFolder(files: Map<string, string>): WorklogSnap
         export_version: metadata.export_version ?? 1,
         exported_at: metadata.exported_at ?? new Date().toISOString(),
         workspace_meta: workspaceMeta,
-        app_settings: appSettings,
         boards: boardSnapshots,
+        catalogs: parseCatalogs(catalogsRaw ? JSON.parse(catalogsRaw) : null),
     };
 }

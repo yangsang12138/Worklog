@@ -1,6 +1,7 @@
 import type { WorkspaceMeta } from '$lib/components/app/types';
 import { getDb, closeDb, WorkspaceRepo } from '$lib/db';
 import { runMigrations } from '$lib/db/migrate';
+import { adoptWorkspaceSettings } from '$lib/app-config/app-config.svelte';
 import * as m from '$lib/paraglide/messages.js';
 
 const WORKSPACE_PATH_KEY = 'last_workspace_path';
@@ -235,6 +236,12 @@ export function getWorkspace() {
             const path = normalizePath(rawPath);
             const db = await getDb(path);
             await runMigrations(db);
+
+            // Identity and credentials belong to the app level, not to a
+            // workspace. Lift any workspace-scoped copies up and erase them
+            // from the DB before anything else reads them. Idempotent.
+            await adoptWorkspaceSettings(db);
+
             await WorkspaceRepo.initWorkspace(db, workspaceFolderName(path) || m.workspace_default_name());
 
             _meta = await WorkspaceRepo.getWorkspaceMeta(db);

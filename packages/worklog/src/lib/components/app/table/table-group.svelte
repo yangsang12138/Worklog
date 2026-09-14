@@ -5,18 +5,18 @@
         OverflowMenuItem,
     } from "carbon-components-svelte";
     import { Calendar, Bookmark } from "carbon-icons-svelte";
-    import {
-        getTableState,
-        priorityIconMap,
-        typeIconMap,
-    } from "./table-state.svelte";
+    import { getTableState, typeIconMap } from "./table-state.svelte";
     import { getWorkspaceShellContext } from "$lib/hooks/workspace-shell-context";
     import {
-        TICKET_PRIORITY_CONFIG,
-        type TicketPriority,
         type TicketType,
         type Ticket,
     } from "$lib/components/app/types";
+    import {
+        priorityColor,
+        priorityIcon,
+        priorityLabel,
+    } from "$lib/components/app/priority-registry.svelte";
+    import { tagColorHex } from "$lib/components/app/tag-registry.svelte";
     import * as m from "$lib/paraglide/messages.js";
 
     const context = getWorkspaceShellContext();
@@ -46,12 +46,6 @@
         }
     }
 
-    // Priority stripe color map (matching kanban cards)
-    const priorityStripeColor: Record<string, string> = {
-        p3: "var(--cds-support-02)",
-        p2: "var(--cds-support-04)",
-        p1: "var(--cds-support-01)",
-    };
 </script>
 
 <div class="status-group" style="--accent: {group.accentColor}">
@@ -84,8 +78,7 @@
                 </thead>
                 <tbody>
                     {#each group.tickets as ticket (ticket.id)}
-                        {@const PriorityIcon =
-                            priorityIconMap[ticket.priority as TicketPriority]}
+                        {@const PriorityIcon = priorityIcon(ticket.priority)}
                         {@const customType = ticketTypesApi?.types?.find(
                             (t) => t.id === ticket.ticket_type,
                         )}
@@ -100,9 +93,9 @@
                         )}
                         <tr
                             class="table-row"
-                            style="--row-prio-color: {priorityStripeColor[
-                                ticket.priority
-                            ] || 'var(--cds-ui-03)'};"
+                            style="--row-prio-color: {priorityColor(
+                                ticket.priority,
+                            )};"
                         >
                             <td class="td-priority-stripe" aria-hidden="true">
                                 <span class="priority-stripe-inner"></span>
@@ -123,14 +116,12 @@
                                         <PriorityIcon size={14} />
                                     {/if}
                                     <Tag
-                                        type={TICKET_PRIORITY_CONFIG[
-                                            ticket.priority as TicketPriority
-                                        ]?.tagColor || "blue"}
+                                        style="background-color: {priorityColor(
+                                            ticket.priority,
+                                        )}; color: white;"
                                         size="sm"
                                     >
-                                        {TICKET_PRIORITY_CONFIG[
-                                            ticket.priority as TicketPriority
-                                        ]?.label || ticket.priority}
+                                        {priorityLabel(ticket.priority)}
                                     </Tag>
                                 </div>
                             </td>
@@ -152,7 +143,14 @@
                                 <div class="cell-labels">
                                     {#if Array.isArray(ticket.labels) && ticket.labels.length > 0}
                                         {#each ticket.labels.slice(0, 3) as label}
-                                            <Tag type="outline" size="sm"
+                                            {@const labelColor =
+                                                tagColorHex(label)}
+                                            <Tag
+                                                type="outline"
+                                                size="sm"
+                                                style={labelColor
+                                                    ? `border-color: ${labelColor}; color: ${labelColor};`
+                                                    : undefined}
                                                 >{label}</Tag
                                             >
                                         {/each}

@@ -3,7 +3,10 @@ import { CUSTOM_COLUMN_ACCENTS } from '$lib/components/app/types';
 import { getDb, BoardRepo, TicketRepo } from '$lib/db';
 import {
     addCustomColumn as addCustomColumnToList,
+    applyViewState,
+    extractViewState,
     findColumn,
+    legacyViewStateFromStored,
     moveColumn as moveColumnInList,
     patchColumn,
     removeColumn as removeColumnFromList,
@@ -11,6 +14,11 @@ import {
     resetWidthShares as resetWidthShares_,
     setWidthShare as setWidthShareInList,
 } from '$lib/db/columns-config';
+import {
+    hasColumnViewState,
+    loadColumnViewState,
+    saveColumnViewState,
+} from '$lib/hooks/board-view-state';
 
 /**
  * Reactive hook for per-board Kanban column configuration.
@@ -18,6 +26,19 @@ import {
  * Owns the board's ordered column list: the four permanent built-in stages
  * plus any custom stages the user added, along with their names, remarks,
  * accents and view state.
+ *
+ * The list is one object at runtime but has **two owners on disk**, and every
+ * write below is routed accordingly:
+ *
+ *   | fields                              | owner     | why                     |
+ *   |-------------------------------------|-----------|-------------------------|
+ *   | status, kind, title, note,          | workspace | the team shares the     |
+ *   | accentColor, order                  | (DB)      | board's stages and names |
+ *   | collapsed, hidden, widthShare       | this      | my layout, my screen    |
+ *   |                                     | machine   |                         |
+ *
+ * The workspace half is a synced field, so keeping the layout half out of it is
+ * what stops two people's column widths from fighting in git.
  *
  * State is module-level: the board page and the Kanban view both call this
  * hook and must observe the same configuration. Only one board is active at a
@@ -37,6 +58,25 @@ export function getBoardColumns(
     getWorkspacePath: () => string | null,
     getBoardId: () => string | null,
 ) {
+    /**
+     * View state for a board, migrating a pre-split config on first sight.
+     *
+     * Only runs when this machine has no record for the board at all, so a user
+     * who un-collapses everything after the split does not get the old values
+     * resurrected on the next load.
+     */
+    function resolveViewState(boardId: string, rawStoredConfig: string) {
+        if (hasColumnViewState(boardId)) {
+            return loadColumnViewState(boardId);
+        }
+
+        const adopted = legacyViewStateFromStored(rawStoredConfig);
+        // Record the decision even when there was nothing to adopt, so the
+        // legacy values are never considered again.
+        saveColumnViewState(boardId, adopted);
+        return adopted;
+    }
+
     // ── Load ────────────────────────────────────────────────────────────────
     async function load() {
         const workspacePath = getWorkspacePath();
@@ -54,7 +94,16 @@ export function getBoardColumns(
         _loading = true;
         try {
             const db = await getDb(workspacePath);
-            _columns = await BoardRepo.getBoardColumns(db, boardId);
+            // Read the board row rather than just the parsed columns: the raw
+            // string is what the one-time view-state migration needs.
+            const board = await BoardRepo.getBoardById(db, boardId);
+            const rawConfig = board?.columns_config ?? '';
+
+            const domain = BoardRepo.parseColumns(rawConfig);
+            _columns = applyViewState(
+                domain,
+                resolveViewState(boardId, rawConfig),
+            );
             _lastLoadedBoardId = boardId;
         } catch (e) {
             console.error('[board-columns] Failed to load column config:', e);
@@ -72,8 +121,11 @@ export function getBoardColumns(
 
     // ── Persist ─────────────────────────────────────────────────────────────
     /**
-     * Push a new column list to the DB. Optimistically updates local state
+     * Push a new column list to both owners. Optimistically updates local state
      * first so edits feel instant, then reconciles with what was stored.
+     *
+     * The database only ever receives the domain half — `BoardRepo` serialises
+     * with `serializeBoardColumns`, which strips view state.
      */
     async function persist(next: KanbanColumnConfig[]) {
         const workspacePath = getWorkspacePath();
@@ -89,8 +141,17 @@ export function getBoardColumns(
         try {
             const db = await getDb(workspacePath);
             const updated = await BoardRepo.updateBoardColumns(db, boardId, next);
+
+            // The layout is local, so it is written here rather than in the DB
+            // write above — and it must be recorded whatever the DB returned.
+            const viewState = extractViewState(next);
+            saveColumnViewState(boardId, viewState);
+
             if (updated) {
-                _columns = BoardRepo.parseColumns(updated.columns_config);
+                _columns = applyViewState(
+                    BoardRepo.parseColumns(updated.columns_config),
+                    viewState,
+                );
             }
             _saveError = null;
         } catch (e) {
@@ -98,6 +159,20 @@ export function getBoardColumns(
             _columns = previous;
             _saveError = e instanceof Error ? e.message : String(e);
         }
+    }
+
+    /**
+     * Apply a view-state-only change: local state plus the local store, no
+     * database write at all.
+     *
+     * Collapsing a column is not an edit to the board — it used to cost a write
+     * into the synced `columns_config`, which is what made personal layout
+     * changes show up as workspace changes.
+     */
+    async function persistViewState(next: KanbanColumnConfig[]) {
+        const boardId = getBoardId();
+        _columns = next;
+        if (boardId) saveColumnViewState(boardId, extractViewState(next));
     }
 
     // ── Custom columns ──────────────────────────────────────────────────────
@@ -172,31 +247,36 @@ export function getBoardColumns(
     }
 
     // ── View state ──────────────────────────────────────────────────────────
+    // Local-only: these never reach the database (see `persistViewState`).
     /** Collapse to a narrow rail / expand back to a full column. */
     async function toggleCollapsed(status: TicketStatus) {
         const column = findColumn(_columns, status);
         if (!column) return;
-        await persist(patchColumn(_columns, status, { collapsed: !column.collapsed }));
+        await persistViewState(
+            patchColumn(_columns, status, { collapsed: !column.collapsed }),
+        );
     }
 
     /** Hide from the board entirely / show again. */
     async function toggleHidden(status: TicketStatus) {
         const column = findColumn(_columns, status);
         if (!column) return;
-        await persist(patchColumn(_columns, status, { hidden: !column.hidden }));
+        await persistViewState(
+            patchColumn(_columns, status, { hidden: !column.hidden }),
+        );
     }
 
     // ── Width planning ──────────────────────────────────────────────────────
-    /** Set a column's planned share of the board width. */
+    /** Set a column's planned share of the board width. Local-only. */
     async function setWidthShare(status: TicketStatus, weight: number) {
-        await persist(setWidthShareInList(_columns, status, weight));
+        await persistViewState(setWidthShareInList(_columns, status, weight));
     }
 
     /** Clear every planned width so the board divides its width evenly again. */
     async function resetWidthShares() {
         const next = resetWidthShares_(_columns);
         if (next === _columns) return;
-        await persist(next);
+        await persistViewState(next);
     }
 
     /** Move a column one slot left (-1) or right (+1). */

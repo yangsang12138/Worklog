@@ -1,6 +1,7 @@
 import type Database from '@tauri-apps/plugin-sql';
 import { getDb } from '$lib/db';
-import { BoardRepo, SettingsRepo, WorkspaceRepo } from '$lib/db';
+import { BoardRepo, WorkspaceRepo } from '$lib/db';
+import { authorNameNow, loadAppConfig } from '$lib/app-config/app-config.svelte';
 import type { Ticket } from '$lib/components/app/types';
 import type {
     PushTarget,
@@ -70,12 +71,9 @@ export function getPushHook(getWorkspacePath: () => string | null) {
             console.error('[push-hook] Failed to load board context:', e);
         }
 
-        try {
-            const settings = await SettingsRepo.getSettings(db);
-            app.author_name = settings.author_name ?? '';
-        } catch {
-            // app_settings is optional context
-        }
+        // Author is an app-level value; workspace DB no longer stores identity.
+        await loadAppConfig();
+        app.author_name = authorNameNow();
 
         try {
             const meta = await WorkspaceRepo.getWorkspaceMeta(db);
