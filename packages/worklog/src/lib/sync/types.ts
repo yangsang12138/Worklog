@@ -1,15 +1,25 @@
 // ── Sync Types ─────────────────────────────────────────────────────────────
 
 export interface SyncConfig {
-    /** GitHub repository HTTPS URL (e.g. https://github.com/user/repo.git) */
-    remote_url: string;
-    /** GitHub Personal Access Token with repo scope */
-    access_token: string;
-    /** Branch to sync against (default: 'main') */
+    /**
+     * The workspace's Git **reference**: the id of an entry in the app-level Git
+     * configuration library. This is the only connection field the workspace
+     * stores; everything below it is resolved from that entry.
+     */
+    git_config_id: string;
+    /**
+     * Branch to sync against. **Workspace scope**: which line of history to sync
+     * is this workspace's own decision, and the same connection may be synced on
+     * different branches by different workspaces.
+     */
     branch: string;
-    /** Git committer name */
+    /** Resolved from the reference: repository HTTPS URL. */
+    remote_url: string;
+    /** Resolved from the reference: the token that configuration carries. */
+    access_token: string;
+    /** Resolved from the reference: Git committer name. */
     git_name: string;
-    /** Git committer email */
+    /** Resolved from the reference: Git committer email. */
     git_email: string;
     /** Whether to automatically push after every save */
     auto_sync: boolean;
@@ -55,6 +65,7 @@ export interface SyncResult {
 }
 
 export const DEFAULT_SYNC_CONFIG: SyncConfig = {
+    git_config_id: '',
     remote_url: '',
     access_token: '',
     branch: 'main',

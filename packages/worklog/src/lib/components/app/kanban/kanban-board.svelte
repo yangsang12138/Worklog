@@ -24,7 +24,7 @@
         findColumn,
         visibleColumns,
     } from "$lib/db/columns-config";
-    import { getDb, SettingsRepo } from "$lib/db";
+    import { resolveAuthorName } from "$lib/app-config/app-config.svelte";
     import * as m from "$lib/paraglide/messages.js";
 
     type Column = {
@@ -278,15 +278,8 @@
         const workspacePath = shell.workspace.path;
         if (!workspacePath) return;
 
-        // Resolve the author name from settings; fall back to "Anonymous"
-        let author = "Anonymous";
-        try {
-            const db = await getDb(workspacePath);
-            const settings = await SettingsRepo.getSettings(db);
-            author = settings.author_name?.trim() || "Anonymous";
-        } catch {
-            // Silently use fallback
-        }
+        // The author is app-level ("who is operating"), never workspace-level.
+        const author = await resolveAuthorName();
 
         const comment: Comment = {
             author,

@@ -2,6 +2,7 @@ import type Database from '@tauri-apps/plugin-sql';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readTextFile, readDir } from '@tauri-apps/plugin-fs';
 import type { ImportResult, ImportStrategy } from './types';
+import { EXPORT_VERSION, emptyCatalogSnapshot } from './types';
 import { parseSnapshotFromSingleJson, parseSnapshotFromFolder } from './deserialize-json';
 import { csvToTickets } from './deserialize-csv';
 import { importSnapshot } from './import';
@@ -58,6 +59,8 @@ export async function importFromFile(
                     ticketsCreated: 0,
                     ticketsUpdated: 0,
                     ticketsSkipped: 0,
+                    catalogRowsCreated: 0,
+                    catalogRowsUpdated: 0,
                 };
             }
 
@@ -83,11 +86,13 @@ export async function importFromFile(
             }
 
             const snapshot = {
-                export_version: 1,
+                export_version: EXPORT_VERSION,
                 exported_at: new Date().toISOString(),
                 workspace_meta: null,
-                app_settings: null,
                 boards: Array.from(boardMap.values()),
+                // A single CSV carries tickets only: it has no place for the
+                // catalogs the tickets' ids refer to.
+                catalogs: emptyCatalogSnapshot(),
             };
 
             return await importSnapshot(db, snapshot, strategy);

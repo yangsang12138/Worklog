@@ -812,6 +812,65 @@ async function migrate_v22(db: Database) {
     }
 }
 
+/**
+ * Migration v23:
+ * Add `git_config_id` to sync_config — the workspace's *reference* to one entry
+ * in the app-level Git configuration library.
+ *
+ * Before this, a workspace stored the remote URL, branch, commit identity and
+ * access token itself. Those are now resources owned by the app config, and a
+ * workspace only records which one it uses. The legacy columns stay (an older
+ * build writing them again would create a second source of truth) and are
+ * cleared by the adoption that runs when the workspace opens.
+ */
+async function migrate_v23(db: Database): Promise<void> {
+    try {
+        await db.execute(
+            `ALTER TABLE sync_config ADD COLUMN git_config_id TEXT NOT NULL DEFAULT ''`,
+        );
+    } catch {
+        // Ignore if the column already exists (a fresh v23 workspace has it).
+    }
+}
+
+/**
+ * Migration v24:
+ * Add `catalog_set_id` to workspace_meta — the workspace's reference to one
+ * entry in the app-level todo-attribute configuration library.
+ *
+ * Before this, a workspace's types/priorities/tags were simply its own rows with
+ * nothing relating them to a shared configuration, so there was no way to say
+ * whether an instance had drifted from the rules it came from.
+ */
+async function migrate_v24(db: Database): Promise<void> {
+    try {
+        await db.execute(
+            `ALTER TABLE workspace_meta ADD COLUMN catalog_set_id TEXT NOT NULL DEFAULT ''`,
+        );
+    } catch {
+        // Ignore if the column already exists (a fresh v24 workspace has it).
+    }
+}
+
+/**
+ * Migration v25:
+ * Add `retired_at` to the three catalog tables.
+ *
+ * A configuration can drop a row while a ticket still points at it. Deleting it
+ * would leave that ticket showing a raw id; keeping it active would mean the
+ * workspace never matches its configuration. A retired row is the honest third
+ * option, and this is the column that records it.
+ */
+async function migrate_v25(db: Database): Promise<void> {
+    for (const table of ['ticket_types', 'ticket_priorities', 'tags']) {
+        try {
+            await db.execute(`ALTER TABLE ${table} ADD COLUMN retired_at TEXT`);
+        } catch {
+            // Ignore if the column already exists (a fresh v25 workspace has it).
+        }
+    }
+}
+
 export async function runMigrations(db: Database): Promise<void> {
     const rows = await db.select<{ schema_version: number }[]>(
         `SELECT schema_version FROM workspace_meta WHERE id = 1`
@@ -903,6 +962,18 @@ export async function runMigrations(db: Database): Promise<void> {
 
     if (current < 22) {
         await migrate_v22(db);
+    }
+
+    if (current < 23) {
+        await migrate_v23(db);
+    }
+
+    if (current < 24) {
+        await migrate_v24(db);
+    }
+
+    if (current < 25) {
+        await migrate_v25(db);
     }
 
     await db.execute(

@@ -109,6 +109,11 @@ export function normalizeColumns(
             title: normalizeText(raw.title),
             note: normalizeText(raw.note),
             accentColor: normalizeText(raw.accentColor),
+            // View state is read from a stored config for backward
+            // compatibility only — it is never written back (see
+            // `serializeBoardColumns`). Retention here keeps old workspaces
+            // rendering the layout their user chose until the values have been
+            // lifted into the local store.
             widthShare: normalizeShare(raw.widthShare),
             collapsed: raw.collapsed === true,
             hidden: raw.hidden === true,
@@ -141,6 +146,11 @@ export function normalizeColumns(
  * Parse the raw `columns_config` column. Anything unusable (empty string,
  * malformed JSON, wrong shape) resolves to the default column set so a board
  * is never left without columns.
+ *
+ * View state found in an older stored config is still honoured here (see
+ * `normalizeColumns`) so an unmigrated workspace keeps the collapsed/hidden
+ * columns its user chose; `legacyViewStateFromStored` is what lifts those
+ * values into the local view-state store that now owns them.
  */
 export function parseBoardColumns(
     raw: string | null | undefined,
@@ -154,9 +164,141 @@ export function parseBoardColumns(
     }
 }
 
-/** Serialise a column list for storage in `boards.columns_config`. */
+/**
+ * Serialise a column list for storage in `boards.columns_config`.
+ *
+ * **Domain only** — the stored record has no view-state keys at all.
+ * `collapsed`, `hidden` and `widthShare` are how the board looks on one
+ * machine, not a team agreement: `columns_config` is part of the synced
+ * workspace snapshot, so storing them here turned every personal layout tweak
+ * into a shared edit and a needless merge conflict. They live in the per-board
+ * view-state store instead (`$lib/hooks/board-view-state`), and an older stored
+ * config that still carries them is read once and lifted there.
+ */
 export function serializeBoardColumns(columns: KanbanColumnConfig[]): string {
-    return JSON.stringify(columns);
+    return JSON.stringify(columns.map(toDomainColumn));
+}
+
+// ── View state (local, per board, never synced) ───────────────────────────
+// Collapsed / hidden / planned width. Everything here is safe to lose: the
+// worst case is that the board looks like its default layout again.
+
+/** What one column looks like on this machine. Absent keys mean "the default". */
+export interface ColumnViewState {
+    collapsed?: boolean;
+    hidden?: boolean;
+    widthShare?: number | null;
+}
+
+/** View state per status, for one board. */
+export type ColumnViewStateMap = Record<string, ColumnViewState>;
+
+/** The shape actually written to `boards.columns_config`. */
+type StoredColumnConfig = Pick<
+    KanbanColumnConfig,
+    'status' | 'kind' | 'title' | 'note' | 'accentColor'
+>;
+
+/** The part of a column that belongs in the synced config. */
+function toDomainColumn(column: KanbanColumnConfig): StoredColumnConfig {
+    return {
+        status: column.status,
+        kind: column.kind,
+        title: column.title,
+        note: column.note,
+        accentColor: column.accentColor,
+    };
+}
+
+/**
+ * Collect the view state of a column list.
+ *
+ * Only non-default values are recorded, so "I expanded everything again" is
+ * stored as an empty map rather than eight explicit falses.
+ */
+export function extractViewState(
+    columns: KanbanColumnConfig[],
+): ColumnViewStateMap {
+    const state: ColumnViewStateMap = {};
+
+    for (const column of columns) {
+        const view: ColumnViewState = {};
+        if (column.collapsed) view.collapsed = true;
+        if (column.hidden) view.hidden = true;
+        if (column.widthShare !== null) view.widthShare = column.widthShare;
+        if (Object.keys(view).length > 0) state[column.status] = view;
+    }
+
+    return state;
+}
+
+/**
+ * Overlay stored view state onto a column list.
+ *
+ * Unknown statuses are ignored, so a column deleted on another machine (or by
+ * an import) cannot resurrect itself through the local store.
+ */
+export function applyViewState(
+    columns: KanbanColumnConfig[],
+    state: ColumnViewStateMap | null | undefined,
+): KanbanColumnConfig[] {
+    if (!state) return columns;
+
+    return columns.map((column) => {
+        const view = state[column.status];
+        if (!view) return column;
+
+        return {
+            ...column,
+            collapsed: view.collapsed === true,
+            hidden: view.hidden === true,
+            widthShare:
+                view.widthShare === undefined
+                    ? column.widthShare
+                    : normalizeShare(view.widthShare),
+        };
+    });
+}
+
+/**
+ * View state still embedded in a stored config, from before the split.
+ *
+ * Used once per board, when this machine has no view state for it yet, so a
+ * user's existing collapsed/hidden columns survive the change instead of
+ * snapping back to the default layout on first load.
+ */
+export function legacyViewStateFromStored(
+    raw: string | null | undefined,
+): ColumnViewStateMap {
+    if (!raw) return {};
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return {};
+    }
+    if (!Array.isArray(parsed)) return {};
+
+    const state: ColumnViewStateMap = {};
+
+    for (const entry of parsed) {
+        if (!entry || typeof entry !== 'object') continue;
+
+        const raw_ = entry as Partial<KanbanColumnConfig>;
+        const status = raw_.status;
+        if (typeof status !== 'string' || status.length === 0) continue;
+
+        const view: ColumnViewState = {};
+        if (raw_.collapsed === true) view.collapsed = true;
+        if (raw_.hidden === true) view.hidden = true;
+        const share = normalizeShare(raw_.widthShare);
+        if (share !== null) view.widthShare = share;
+
+        if (Object.keys(view).length > 0) state[status] = view;
+    }
+
+    return state;
 }
 
 export function visibleColumns(columns: KanbanColumnConfig[]): KanbanColumnConfig[] {

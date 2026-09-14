@@ -5,6 +5,7 @@ export * as TicketRepo from './repositories/ticket.repo';
 export * as TicketTypeRepo from './repositories/ticket-type.repo';
 export * as TicketPriorityRepo from './repositories/ticket-priority.repo';
 export * as TagRepo from './repositories/tag.repo';
+export * as CatalogUsageRepo from './repositories/catalog-usage.repo';
 export * as SettingsRepo from './repositories/settings.repo';
 export * as EventRepo from './repositories/event.repo';
 export type {

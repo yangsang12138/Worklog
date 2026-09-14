@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 25;
 
 export const CREATE_TABLES = `
   CREATE TABLE IF NOT EXISTS workspace_meta (
@@ -6,6 +6,10 @@ export const CREATE_TABLES = `
     name            TEXT NOT NULL,
     schema_version  INTEGER NOT NULL DEFAULT 1,
     sync_mode       TEXT NOT NULL DEFAULT 'local',
+    -- Reference to one entry in the app-level todo-attribute configuration
+    -- library. The workspace's own catalog rows are its *instance* of that
+    -- configuration; this is what tells the two sides they belong together.
+    catalog_set_id  TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL
   );
 
@@ -26,6 +30,10 @@ export const CREATE_TABLES = `
     color       TEXT NOT NULL,
     icon        TEXT,
     is_default  INTEGER NOT NULL DEFAULT 0,
+    -- Set when a configuration overwrote this workspace and dropped the row
+    -- while tickets still pointed at it: the row stays resolvable but leaves the
+    -- active catalog, so the instance really does match the configuration.
+    retired_at  TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
   );
@@ -36,6 +44,7 @@ export const CREATE_TABLES = `
     color       TEXT NOT NULL DEFAULT '#0f62fe',
     rank        INTEGER NOT NULL DEFAULT 0,
     is_default  INTEGER NOT NULL DEFAULT 0,
+    retired_at  TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
   );
@@ -44,6 +53,7 @@ export const CREATE_TABLES = `
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     color       TEXT NOT NULL DEFAULT 'cool-gray',
+    retired_at  TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
   );
@@ -77,6 +87,11 @@ export const CREATE_TABLES = `
 
   CREATE TABLE IF NOT EXISTS sync_config (
     id              INTEGER PRIMARY KEY CHECK (id = 1),
+    -- The workspace's Git *reference*: it names one entry in the app-level Git
+    -- configuration library, which owns the remote URL, branch, commit identity
+    -- and credential. The columns below are the pre-reference shape, still
+    -- written empty so an older build cannot resurrect a stale duplicate.
+    git_config_id   TEXT NOT NULL DEFAULT '',
     remote_url      TEXT NOT NULL DEFAULT '',
     access_token    TEXT NOT NULL DEFAULT '',
     branch          TEXT NOT NULL DEFAULT 'main',

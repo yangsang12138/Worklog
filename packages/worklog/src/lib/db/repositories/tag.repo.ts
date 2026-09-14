@@ -4,6 +4,8 @@ export interface TagRecord {
     id: string;
     name: string;
     color: string;
+    /** Set when the row left the active catalog but tickets still point at it. */
+    retired_at?: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -47,6 +49,7 @@ export async function update(
     if (tag.name !== undefined) { fields.push("name = ?"); values.push(tag.name.trim()); }
     if (tag.color !== undefined) { fields.push("color = ?"); values.push(tag.color); }
 
+    if (tag.retired_at !== undefined) { fields.push("retired_at = ?"); values.push(tag.retired_at); }
     fields.push("updated_at = ?");
     values.push(now);
     values.push(id);
@@ -72,4 +75,23 @@ function mapRow(row: any): TagRecord {
         created_at: row.created_at,
         updated_at: row.updated_at,
     };
+}
+
+/**
+ * Retire a row, or bring it back.
+ *
+ * Retiring is what an applied configuration does to a row it does not contain
+ * while a ticket still points at it: the row leaves the active catalog but stays
+ * resolvable, so the ticket keeps its type/priority/tag. Restoring is the way
+ * back, for when the user decides the row belongs in the catalog after all.
+ */
+export async function setRetired(
+    db: Database,
+    id: string,
+    retired: boolean,
+): Promise<void> {
+    await db.execute(
+        `UPDATE tags SET retired_at = ?, updated_at = ? WHERE id = ?`,
+        [retired ? new Date().toISOString() : null, new Date().toISOString(), id],
+    );
 }

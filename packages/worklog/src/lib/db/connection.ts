@@ -38,6 +38,20 @@ export async function getDb(workspacePath: string): Promise<Database> {
     const { ensureBoardSchema } = await import('./ensure-board-schema');
     await ensureBoardSchema(_db);
 
+    // ── Reconcile the catalog tables ───────────────────
+    // Adds `retired_at` for workspaces the migration chain can no longer reach.
+    const { ensureCatalogSchema } = await import('./ensure-catalog-schema');
+    await ensureCatalogSchema(_db);
+
+    // ── Reconcile the tickets table ────────────────────
+    // A workspace can be stamped at the current schema_version while its
+    // `tickets` table is still the one v21 built — the table that pinned
+    // `priority` to p1/p2/p3, which makes a custom priority fail with SQLite
+    // error 275. Must run before ensurePushSchema, which repairs the
+    // `push_records` reference that this rebuild dangles.
+    const { ensureTicketSchema } = await import('./ensure-ticket-schema');
+    await ensureTicketSchema(_db);
+
     // ── Reconcile remote-push tables ───────────────────
     // Runs independently of schema_version: a workspace can report the current
     // version while its tables were created by older code and never upgraded
@@ -50,15 +64,9 @@ export async function getDb(workspacePath: string): Promise<Database> {
     const typesCount = await _db.select<{ count: number }[]>("SELECT COUNT(*) as count FROM ticket_types");
     if (typesCount && typesCount[0] && typesCount[0].count === 0) {
         const now = new Date().toISOString();
-        const defaultTypes = [
-            { id: 'bug', name: 'Bug', color: '#fa4d56', icon: 'bug', is_default: 0 },
-            { id: 'feature', name: 'Feature', color: '#198038', icon: 'star', is_default: 1 },
-            { id: 'chore', name: 'Chore', color: '#525252', icon: 'tools', is_default: 0 },
-            { id: 'task', name: 'Task', color: '#00539a', icon: 'checkmark', is_default: 0 },
-            { id: 'improvement', name: 'Improvement', color: '#8a3ffc', icon: 'upgrade', is_default: 0 },
-        ];
+        const { DEFAULT_TICKET_TYPES } = await import('./catalogs');
 
-        for (const t of defaultTypes) {
+        for (const t of DEFAULT_TICKET_TYPES) {
             await _db.execute(
                 "INSERT INTO ticket_types (id, name, color, icon, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [t.id, t.name, t.color, t.icon, t.is_default, now, now]

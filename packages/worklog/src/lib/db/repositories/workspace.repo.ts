@@ -24,6 +24,32 @@ export async function getWorkspaceMeta(db: Database): Promise<WorkspaceMeta | nu
     return rows[0] ?? null;
 }
 
+/**
+ * The workspace's reference to an app-level todo-attribute configuration.
+ *
+ * Read directly rather than through `WorkspaceMeta`, whose shape is shared with
+ * the export snapshot: a reference to a machine-local library has no meaning in a
+ * file meant for another machine.
+ */
+export async function getCatalogSetId(db: Database): Promise<string> {
+    try {
+        const rows = await db.select<{ catalog_set_id: string }[]>(
+            `SELECT catalog_set_id FROM workspace_meta WHERE id = 1`,
+        );
+        return rows[0]?.catalog_set_id ?? '';
+    } catch {
+        // Pre-migration workspace.
+        return '';
+    }
+}
+
+export async function setCatalogSetId(db: Database, id: string): Promise<void> {
+    await db.execute(
+        `UPDATE workspace_meta SET catalog_set_id = ? WHERE id = 1`,
+        [id],
+    );
+}
+
 export async function updateWorkspaceName(db: Database, name: string): Promise<void> {
     await db.execute(
         `UPDATE workspace_meta SET name = ? WHERE id = 1`,

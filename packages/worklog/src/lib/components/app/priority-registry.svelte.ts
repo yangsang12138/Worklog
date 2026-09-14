@@ -30,8 +30,19 @@ export function setTicketPriorities(priorities: TicketPriorityRecord[]) {
 }
 
 /** Every level, in display order (highest first). */
+/**
+ * Every level, retired ones included.
+ *
+ * Retired rows are not gone: a ticket may point at one, and it must resolve to a
+ * name and a colour rather than to a bare id. Pickers use `pickablePriorities`.
+ */
 export function priorityOptions(): TicketPriorityRecord[] {
     return _priorities;
+}
+
+/** The levels a form may offer: retired ones are no longer in the catalog. */
+export function pickablePriorities(): TicketPriorityRecord[] {
+    return _priorities.filter((priority) => !priority.retired_at);
 }
 
 export function findPriority(id: TicketPriority | string) {

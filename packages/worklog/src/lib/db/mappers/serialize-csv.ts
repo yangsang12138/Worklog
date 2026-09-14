@@ -84,10 +84,11 @@ export function snapshotToFolderCsvFiles(snapshot: WorklogSnapshot): Map<string,
         files.set('workspace.json', JSON.stringify(snapshot.workspace_meta, null, 2));
     }
 
-    // settings.json
-    if (snapshot.app_settings) {
-        files.set('settings.json', JSON.stringify(snapshot.app_settings, null, 2));
-    }
+    // catalogs.json — always JSON, even in CSV mode: catalog rows are not
+    // ticket-shaped, and tickets are the only thing CSV can express.
+    files.set('catalogs.json', JSON.stringify(snapshot.catalogs, null, 2));
+
+    // NOTE: no settings.json — identity is app-level, not workspace data.
 
     // boards/<id>.json (metadata) + boards/<id>.csv (tickets)
     for (const boardSnap of snapshot.boards) {

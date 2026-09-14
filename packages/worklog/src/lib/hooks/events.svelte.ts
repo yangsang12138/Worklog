@@ -6,6 +6,10 @@ import {
     type CreateEventInput,
 } from '$lib/db';
 import type { EventRecord } from '$lib/db/repositories/event.repo';
+import {
+    authorNameNow,
+    loadAppConfig,
+} from '$lib/app-config/app-config.svelte';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -35,32 +39,20 @@ export interface LifecycleEventPayload {
     description?: string;
 }
 
-// ── Actor cache ─────────────────────────────────────────────────────────────
-// Read from settings lazily and cache per DB connection.
-
-let _actorCache = $state<string>('');
-
-/**
- * Resolve the actor name from app_settings. Lazily loaded.
- * Returns the cached value if already resolved for the given DB.
- */
-async function resolveActor(db: Database): Promise<string> {
-    if (_actorCache) return _actorCache;
-    try {
-        const { SettingsRepo } = await import('$lib/db');
-        const settings = await SettingsRepo.getSettings(db);
-        _actorCache = settings.author_name || 'unknown';
-    } catch {
-        _actorCache = 'unknown';
-    }
-    return _actorCache;
-}
+// ── Actor ───────────────────────────────────────────────────────────────────
+// The actor is an app-level value (this person), so there is nothing to cache
+// per database connection: it is read straight from the app config.
 
 /**
- * Invalidate the actor cache (call when settings are updated).
+ * Resolve the actor name for lifecycle events.
+ *
+ * Previously read `app_settings.author_name` from the workspace DB — i.e. the
+ * actor changed when you switched workspaces, and the value was synced to
+ * teammates. Identity is app-level now.
  */
-export function invalidateActorCache(): void {
-    _actorCache = '';
+async function resolveActor(): Promise<string> {
+    await loadAppConfig();
+    return authorNameNow() || 'unknown';
 }
 
 // ── Emit ────────────────────────────────────────────────────────────────────
@@ -79,7 +71,7 @@ export async function emitEvent(
     },
 ): Promise<EventRecord | null> {
     try {
-        const actor = await resolveActor(db);
+        const actor = await resolveActor();
         const eventInput: CreateEventInput = {
             entity_type: input.entity_type,
             entity_id: input.entity_id,

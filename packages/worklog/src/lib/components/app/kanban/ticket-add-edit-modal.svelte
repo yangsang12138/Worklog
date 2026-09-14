@@ -30,6 +30,7 @@
     import { type Ticket, type TicketStatus, type TicketPriority } from "$lib/components/app/types";
     import {
         defaultPriorityId,
+        pickablePriorities,
         priorityOptions,
     } from "$lib/components/app/priority-registry.svelte";
     import type { MarkdownInsertKind } from "$lib/utils/markdown-insert";
@@ -81,7 +82,7 @@
 
     /** Priority items, falling back to the built-ins before the catalog loads. */
     const priorityItems = $derived.by(() => {
-        const options = priorityOptions();
+        const options = pickablePriorities();
         if (options.length > 0) {
             return options.map((priority) => ({
                 id: priority.id,
@@ -340,8 +341,8 @@
                     };
                 } else {
                     const defaultType =
-                        ticketTypesApi.types.find((t) => t.is_default) ||
-                        ticketTypesApi.types[0];
+                        ticketTypesApi.activeTypes.find((t) => t.is_default) ||
+                        ticketTypesApi.activeTypes[0];
                     form = {
                         title: "",
                         description: "",
@@ -491,7 +492,7 @@
                         hideLabel
                         aria-label={m.modal_type()}
                         bind:selectedId={form.ticketType}
-                        items={ticketTypesApi.types.map((t) => ({
+                        items={ticketTypesApi.activeTypes.map((t) => ({
                             id: t.id,
                             text: t.name,
                         }))}
@@ -501,7 +502,7 @@
                 <div class="attr-field attr-field--tags">
                     <TagManager
                         label={m.modal_tags()}
-                        availableTags={tagsApi.names}
+                        availableTags={tagsApi.activeTags.map((t) => t.name)}
                         bind:selectedTags={form.tags}
                         onManage={() => openCatalog("tag")}
                         onCreateTag={(name) => void tagsApi.create({ name })}

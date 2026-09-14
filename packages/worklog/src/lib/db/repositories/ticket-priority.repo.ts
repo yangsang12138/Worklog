@@ -7,6 +7,8 @@ export interface TicketPriorityRecord {
     /** Ordering weight — lower sorts first (highest priority first). */
     rank: number;
     is_default: boolean;
+    /** Set when the row left the active catalog but tickets still point at it. */
+    retired_at?: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -65,6 +67,7 @@ export async function update(
     if (priority.rank !== undefined) { fields.push("rank = ?"); values.push(priority.rank); }
     if (priority.is_default !== undefined) { fields.push("is_default = ?"); values.push(priority.is_default ? 1 : 0); }
 
+    if (priority.retired_at !== undefined) { fields.push("retired_at = ?"); values.push(priority.retired_at); }
     fields.push("updated_at = ?");
     values.push(now);
     values.push(id);
@@ -102,4 +105,23 @@ function mapRow(row: any): TicketPriorityRecord {
         rank: Number(row.rank),
         is_default: row.is_default === 1,
     };
+}
+
+/**
+ * Retire a row, or bring it back.
+ *
+ * Retiring is what an applied configuration does to a row it does not contain
+ * while a ticket still points at it: the row leaves the active catalog but stays
+ * resolvable, so the ticket keeps its type/priority/tag. Restoring is the way
+ * back, for when the user decides the row belongs in the catalog after all.
+ */
+export async function setRetired(
+    db: Database,
+    id: string,
+    retired: boolean,
+): Promise<void> {
+    await db.execute(
+        `UPDATE ticket_priorities SET retired_at = ?, updated_at = ? WHERE id = ?`,
+        [retired ? new Date().toISOString() : null, new Date().toISOString(), id],
+    );
 }

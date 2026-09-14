@@ -6,6 +6,12 @@ export interface TicketType {
     color: string;
     icon: string | null;
     is_default: boolean;
+    /**
+     * When set, the row has left the active catalog (a configuration overwrote
+     * this workspace without it) but is kept so tickets that point at it still
+     * resolve.
+     */
+    retired_at?: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -62,6 +68,7 @@ export async function update(db: Database, id: string, type: Partial<TicketType>
     if (type.icon !== undefined) { fields.push("icon = ?"); values.push(type.icon); }
     if (type.is_default !== undefined) { fields.push("is_default = ?"); values.push(type.is_default ? 1 : 0); }
     
+    if (type.retired_at !== undefined) { fields.push("retired_at = ?"); values.push(type.retired_at); }
     fields.push("updated_at = ?");
     values.push(now);
     values.push(id);
@@ -81,4 +88,23 @@ function mapRow(row: any): TicketType {
         ...row,
         is_default: row.is_default === 1
     };
+}
+
+/**
+ * Retire a row, or bring it back.
+ *
+ * Retiring is what an applied configuration does to a row it does not contain
+ * while a ticket still points at it: the row leaves the active catalog but stays
+ * resolvable, so the ticket keeps its type/priority/tag. Restoring is the way
+ * back, for when the user decides the row belongs in the catalog after all.
+ */
+export async function setRetired(
+    db: Database,
+    id: string,
+    retired: boolean,
+): Promise<void> {
+    await db.execute(
+        `UPDATE ticket_types SET retired_at = ?, updated_at = ? WHERE id = ?`,
+        [retired ? new Date().toISOString() : null, new Date().toISOString(), id],
+    );
 }

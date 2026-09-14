@@ -13,7 +13,7 @@
     import TicketAddEditModal from "../kanban/ticket-add-edit-modal.svelte";
     import TicketDeleteConfirm from "../kanban/ticket-delete-confirm.svelte";
     import TicketPreviewSheet from "../kanban/ticket-preview-sheet.svelte";
-    import { getDb, SettingsRepo } from "$lib/db";
+    import { resolveAuthorName } from "$lib/app-config/app-config.svelte";
     import * as m from "$lib/paraglide/messages.js";
 
     let { searchQuery = "" }: { searchQuery?: string } = $props();
@@ -105,14 +105,8 @@
     async function handleAddComment(ticketId: string, body: string) {
         const workspacePath = shell.workspace.path;
         if (!workspacePath) return;
-        let author = "Anonymous";
-        try {
-            const db = await getDb(workspacePath);
-            const settings = await SettingsRepo.getSettings(db);
-            author = settings.author_name?.trim() || "Anonymous";
-        } catch {
-            /* use fallback */
-        }
+        // The author is app-level ("who is operating"), never workspace-level.
+        const author = await resolveAuthorName();
         const comment: Comment = {
             author,
             body,

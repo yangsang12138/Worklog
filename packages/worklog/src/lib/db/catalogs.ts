@@ -11,6 +11,21 @@ import * as m from '$lib/paraglide/messages.js';
  * who deletes a built-in level never sees it come back.
  */
 
+/**
+ * The ticket types a workspace starts with.
+ *
+ * Exported so the app-level built-in configuration (see
+ * `$lib/app-config/builtin-catalogs`) offers exactly these, with these ids: the
+ * built-in is meant to *be* the starting set, not a second opinion about it.
+ */
+export const DEFAULT_TICKET_TYPES = [
+    { id: 'bug', name: 'Bug', color: '#fa4d56', icon: 'bug', is_default: 0 },
+    { id: 'feature', name: 'Feature', color: '#198038', icon: 'star', is_default: 1 },
+    { id: 'chore', name: 'Chore', color: '#525252', icon: 'tools', is_default: 0 },
+    { id: 'task', name: 'Task', color: '#00539a', icon: 'checkmark', is_default: 0 },
+    { id: 'improvement', name: 'Improvement', color: '#8a3ffc', icon: 'upgrade', is_default: 0 },
+];
+
 /** Tags offered by the ticket tag picker out of the box. */
 export const DEFAULT_TAG_NAMES = [
     'frontend',
@@ -33,7 +48,7 @@ export const DEFAULT_TAG_NAMES = [
  * Ids are fixed because tickets already store them; the *names* are seeded in
  * the user's current language and are freely renamable afterwards.
  */
-function defaultPriorities() {
+export function defaultPriorities() {
     return [
         { id: 'p1', name: m.modal_priority_high(), color: '#da1e28', rank: 10, is_default: 0 },
         { id: 'p2', name: m.modal_priority_medium(), color: '#005d5d', rank: 20, is_default: 1 },

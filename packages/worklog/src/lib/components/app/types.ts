@@ -85,6 +85,11 @@ export function isBuiltinStatus(status: string): status is BuiltinTicketStatus {
 // `title` and `note` are *overrides*: null means "use the built-in default"
 // (i18n label / built-in note), which is why a built-in column keeps following
 // the UI language until it is renamed.
+//
+// The type is the *runtime* shape, merging two owners on disk: everything down
+// to `accentColor` is workspace data (stored in `boards.columns_config`, and
+// synced), while `widthShare` / `collapsed` / `hidden` are one machine's
+// layout (stored locally by `$lib/hooks/board-view-state`, never synced).
 
 export type KanbanColumnKind = "builtin" | "custom";
 
@@ -105,11 +110,21 @@ export interface KanbanColumnConfig {
      * Planned share of the board's width, as a relative weight. null means
      * "not planned yet" and behaves as 1, so an untouched board divides its
      * width evenly.
+     *
+     * View state: local to this machine.
      */
     widthShare: number | null;
-    /** Collapsed to a narrow rail: still on the board, still a drop target. */
+    /**
+     * Collapsed to a narrow rail: still on the board, still a drop target.
+     *
+     * View state: local to this machine.
+     */
     collapsed: boolean;
-    /** Hidden from the board entirely — managed from the column manager. */
+    /**
+     * Hidden from the board entirely — managed from the column manager.
+     *
+     * View state: local to this machine.
+     */
     hidden: boolean;
 }
 
